@@ -1,3 +1,4 @@
+//! Security tools: JWT decoding and hashes.
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use super::{Category, TextTool, Tool};
 
@@ -5,6 +6,7 @@ pub fn jwt() -> Box<dyn Tool> {
     Box::new(TextTool::new("JWT Debugger", "JW", Category::Security, vec![("Inspect", jwt_decode)]))
 }
 
+/// Decodes a JWT's header and payload (Base64URL JSON). The signature is not checked.
 fn jwt_decode(input: &str) -> Result<String, String> {
     let parts: Vec<_> = input.trim().split('.').collect();
     if parts.len() < 2 { return Err("Expected a JWT with header and payload".into()); }
@@ -21,6 +23,7 @@ pub fn hash() -> Box<dyn Tool> {
         .describe("Hash the exact input text (UTF-8 bytes, whitespace included)."))
 }
 
+/// MD5, SHA-1, SHA-256 and SHA-512 of the input's UTF-8 bytes, as lowercase hex.
 fn hashes(input: &str) -> Result<String, String> {
     use sha2::Digest;
     fn hex(bytes: &[u8]) -> String { bytes.iter().map(|b| format!("{b:02x}")).collect() }

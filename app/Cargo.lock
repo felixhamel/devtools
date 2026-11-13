@@ -594,6 +594,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bstr"
+version = "1.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bb31b46c14244e20ee9984b11bf5c992b91fb6939fea616e3512c8baecdbe5f"
+dependencies = [
+ "memchr",
+ "serde_core",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1149,7 +1159,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "devutils-clone"
+name = "devutils"
 version = "0.1.0"
 dependencies = [
  "arboard",
@@ -1157,6 +1167,8 @@ dependencies = [
  "chrono",
  "croner",
  "eframe",
+ "getrandom 0.3.4",
+ "html-escape",
  "image",
  "md-5",
  "minify-html",
@@ -1169,6 +1181,7 @@ dependencies = [
  "sha1 0.11.0",
  "sha2",
  "shlex",
+ "similar",
  "sqlformat",
  "url",
  "urlencoding",
@@ -1970,6 +1983,12 @@ name = "hexf-parse"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
+
+[[package]]
+name = "html-escape"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d45ed4d99334da2a2f221504e8ffc8ad09baf2a452b154465a976bfde697b004"
 
 [[package]]
 name = "hybrid-array"
@@ -4733,6 +4752,15 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "similar"
+version = "3.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2f8bec09ae8fae0f4f265a4559a9334be3929d8504e9b536df0a41302bd1733"
+dependencies = [
+ "bstr",
+]
 
 [[package]]
 name = "siphasher"

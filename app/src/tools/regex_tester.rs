@@ -1,3 +1,4 @@
+//! RegExp Tester: live matches and capture groups (Rust `regex` syntax).
 use eframe::egui;
 use super::{Category, Tool};
 use crate::ui;
@@ -34,7 +35,8 @@ impl Tool for RegexTester {
                 }
             });
             changed |= ui::fill_editor(left, "text", &mut self.text, "Text to search…").changed();
-            if changed {
+            // Re-run only when the pattern, flags or text changed, not on every frame.
+        if changed {
                 match find_matches(&self.pattern, &self.text, self.ignore_case, self.multi_line, self.dot_all) {
                     Ok(out) => { self.output = out; self.error.clear(); }
                     Err(e) => { self.output.clear(); self.error = e; }
@@ -49,6 +51,7 @@ impl Tool for RegexTester {
     }
 }
 
+/// Lists every match with its byte range and capture groups (named groups show their name).
 fn find_matches(pattern: &str, text: &str, ignore_case: bool, multi_line: bool, dot_all: bool) -> Result<String, String> {
     if pattern.is_empty() { return Ok(String::new()); }
     let re = regex::RegexBuilder::new(pattern).case_insensitive(ignore_case).multi_line(multi_line).dot_matches_new_line(dot_all)

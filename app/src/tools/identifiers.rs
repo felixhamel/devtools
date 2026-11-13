@@ -1,7 +1,9 @@
+//! UUID v4 / ULID generation and decoding.
 use eframe::egui;
 use super::{text::random_bytes, Category, Tool};
 use crate::ui::{self, TextIo};
 
+/// ULID alphabet (Crockford's Base32: no I, L, O, U).
 const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 #[derive(Default)]
@@ -30,6 +32,7 @@ impl Tool for Identifiers {
     }
 }
 
+/// A random UUID v4, or a ULID (48-bit millisecond timestamp + 80 random bits).
 pub fn identifier(generate_ulid: bool) -> Result<String, String> {
     let mut bytes = random_bytes::<16>()?;
     if generate_ulid {
@@ -48,6 +51,7 @@ pub fn identifier(generate_ulid: bool) -> Result<String, String> {
     }
 }
 
+/// Describes a ULID (timestamp, randomness) or a UUID (version, variant).
 pub fn decode_identifier(input: &str) -> Result<String, String> {
     let s = input.trim();
     if s.len() == 26 && s.is_ascii() {

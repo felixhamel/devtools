@@ -1,9 +1,10 @@
+//! Text Diff Checker: line-by-line comparison of two texts.
 use eframe::egui;
 use super::{Category, Tool};
 use crate::ui;
 
 #[derive(Default)]
-pub struct Diff { left: String, right: String, output: String, error: String }
+pub struct Diff { left: String, right: String, output: String }
 
 impl Tool for Diff {
     fn name(&self) -> &'static str { "Text Diff Checker" }
@@ -13,6 +14,7 @@ impl Tool for Diff {
     fn ui(&mut self, ui: &mut egui::Ui) {
         ui::description(ui, "Compare two texts line by line. Removed lines start with − and added lines with +.");
         ui.add_space(10.0);
+        // The two inputs share the top 55%; the differences take the rest.
         let height = (ui.available_height() * 0.55).max(120.0);
         ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
             ui::split(ui, |left, right| {
@@ -28,33 +30,25 @@ impl Tool for Diff {
         });
         ui.add_space(10.0);
         ui::toolbar(ui, "Differences:", |ui| {
-            if ui.add(ui::action_button("Compare", true)).clicked() {
-                match diff_lines(&self.left, &self.right) { Ok(result) => { self.output = result; self.error.clear(); } Err(error) => { self.output.clear(); self.error = error; } }
-            }
+            if ui.add(ui::action_button("Compare", true)).clicked() { self.output = diff_lines(&self.left, &self.right); }
             if ui.add(ui::action_button("Clear", false)).clicked() { *self = Self::default(); }
             if ui.add(ui::action_button("Copy", false)).clicked() { ui.ctx().copy_text(self.output.clone()); }
         });
-        ui::error_label(ui, &self.error);
         ui::fill_editor(ui, "differences", &mut self.output, "");
     }
 }
 
-pub fn diff_lines(left: &str, right: &str) -> Result<String, String> {
-    let a: Vec<_> = left.lines().collect();
-    let b: Vec<_> = right.lines().collect();
-    if (a.len() + 1).saturating_mul(b.len() + 1) > 1_000_000 { return Err("Text is too large to compare; use fewer lines".into()); }
-    let mut lengths = vec![vec![0u32; b.len() + 1]; a.len() + 1];
-    for i in (0..a.len()).rev() { for j in (0..b.len()).rev() {
-        lengths[i][j] = if a[i] == b[j] { lengths[i+1][j+1] + 1 } else { lengths[i+1][j].max(lengths[i][j+1]) };
-    }}
-    let (mut i, mut j) = (0, 0);
-    let mut result = Vec::new();
-    while i < a.len() || j < b.len() {
-        if i < a.len() && j < b.len() && a[i] == b[j] { result.push(format!("  {}", a[i])); i += 1; j += 1; }
-        else if i < a.len() && (j == b.len() || lengths[i+1][j] >= lengths[i][j+1]) { result.push(format!("- {}", a[i])); i += 1; }
-        else { result.push(format!("+ {}", b[j])); j += 1; }
-    }
-    Ok(result.join("\n"))
+/// Unified line diff: `  ` unchanged, `- ` removed, `+ ` added.
+/// Uses Myers' algorithm (via `similar`); on very large inputs it gives up on
+/// finding the minimal diff after a short deadline so the UI never freezes.
+pub fn diff_lines(left: &str, right: &str) -> String {
+    let diff = similar::TextDiff::configure()
+        .timeout(std::time::Duration::from_millis(500))
+        .diff_lines(left, right);
+    diff.iter_all_changes().map(|change| {
+        let prefix = match change.tag() { similar::ChangeTag::Equal => "  ", similar::ChangeTag::Delete => "- ", similar::ChangeTag::Insert => "+ " };
+        format!("{prefix}{}", change.value().trim_end_matches(['\n', '\r']))
+    }).collect::<Vec<_>>().join("\n")
 }
 
 #[cfg(test)]
@@ -62,7 +56,17 @@ mod tests {
     use super::*;
     #[test]
     fn compares_lines() {
-        assert_eq!(diff_lines("one\ntwo", "one\nthree").unwrap(), "  one\n- two\n+ three");
-        assert_eq!(diff_lines("", "new").unwrap(), "+ new");
+        assert_eq!(diff_lines("one\ntwo", "one\nthree"), "  one\n- two\n+ three");
+        assert_eq!(diff_lines("", "new"), "+ new");
+        assert_eq!(diff_lines("a\r\nb\r\n", "a\r\nb\r\n"), "  a\n  b");
+    }
+
+    #[test]
+    fn handles_large_inputs() {
+        // 20 000 lines each: far beyond what a quadratic table could hold.
+        let left: String = (0..20_000).map(|i| format!("line {i}\n")).collect();
+        let right = left.replace("line 10000\n", "changed\n");
+        let out = diff_lines(&left, &right);
+        assert!(out.contains("- line 10000\n+ changed"), "{}", &out[..200]);
     }
 }

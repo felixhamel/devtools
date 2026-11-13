@@ -1,3 +1,4 @@
+//! Markdown Preview: source on the left, rendered preview on the right.
 use eframe::egui;
 use super::{Category, Tool};
 use crate::ui;
@@ -31,6 +32,7 @@ impl Tool for Markdown {
 }
 
 impl Markdown {
+    /// A simple line-based renderer: headings, bullets, quotes and fenced code blocks.
     fn preview(&self, ui: &mut egui::Ui) {
         ui::editor_frame().show(ui, |ui| {
             let size = ui.available_size();

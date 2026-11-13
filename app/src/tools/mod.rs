@@ -1,5 +1,11 @@
-//! Tool registry. To add a tool: implement `Tool` (or build a `TextTool`)
-//! and add it to `registry()`.
+//! The tool registry.
+//!
+//! Adding a tool:
+//! - text in, text out: build a [`TextTool`] with one or more transform functions;
+//! - anything else: implement [`Tool`] on a struct that holds the tool's state.
+//!
+//! Then add it to [`registry()`]. Each tool keeps its own state while the app runs,
+//! so switching tools does not lose what was typed.
 use eframe::egui;
 use crate::ui::{self, TextIo};
 
@@ -22,6 +28,7 @@ mod security;
 mod text;
 mod x509;
 
+/// Sidebar groups, shown in the order of [`Category::ALL`].
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Category { Date, Data, Encoding, Security, Text, Code }
 
@@ -41,13 +48,16 @@ impl Category {
 }
 
 pub trait Tool {
+    /// Shown in the sidebar, the title bar and matched by the search box.
     fn name(&self) -> &'static str;
-    /// Short text shown in the sidebar badge.
+    /// Short text (2–3 characters) shown in the sidebar badge.
     fn badge(&self) -> &'static str;
     fn category(&self) -> Category;
+    /// Draws the tool below the title bar. Called every frame while the tool is selected.
     fn ui(&mut self, ui: &mut egui::Ui);
 }
 
+/// Turns the input text into output text, or an error message shown in red.
 pub type Transform = fn(&str) -> Result<String, String>;
 
 /// A tool that turns its input into output with one or more buttons.
@@ -66,6 +76,7 @@ impl TextTool {
         Self { name, badge, category, description: "Paste or type your input, then choose an action.", actions, io: TextIo::default() }
     }
 
+    /// Replaces the default one-line explanation shown under the title.
     pub fn describe(mut self, description: &'static str) -> Self { self.description = description; self }
 }
 
@@ -85,6 +96,7 @@ impl Tool for TextTool {
     }
 }
 
+/// Every tool, in sidebar order within each category.
 pub fn registry() -> Vec<Box<dyn Tool>> {
     vec![
         date::unix_time(),

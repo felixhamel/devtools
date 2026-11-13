@@ -1,20 +1,20 @@
-use base64::{engine::general_purpose::STANDARD, Engine};
-use super::{Category, TextTool, Tool};
+//! Certificate Decoder (X.509): PEM or DER → subject, validity, SANs, key and fingerprints.
+use super::{encoding::decode_base64, Category, TextTool, Tool};
 
 pub fn certificate() -> Box<dyn Tool> {
     Box::new(TextTool::new("Certificate Decoder (X.509)", "CRT", Category::Security, vec![("Decode", decode_certificates)])
         .describe("Paste one or more PEM certificates (-----BEGIN CERTIFICATE-----) or Base64 DER."))
 }
 
+/// Accepts one or more PEM blocks, or a single Base64-encoded DER certificate.
 fn decode_certificates(src: &str) -> Result<String, String> {
     let ders: Vec<Vec<u8>> = if src.contains("-----BEGIN") {
         x509_parser::pem::Pem::iter_from_buffer(src.as_bytes())
             .map(|pem| pem.map(|p| p.contents).map_err(|e| format!("Invalid PEM: {e}")))
             .collect::<Result<_, _>>()?
     } else {
-        let compact: String = src.chars().filter(|c| !c.is_whitespace()).collect();
-        if compact.is_empty() { return Err("Paste a certificate".into()); }
-        vec![STANDARD.decode(compact).map_err(|e| format!("Not PEM, and not valid Base64: {e}"))?]
+        if src.trim().is_empty() { return Err("Paste a certificate".into()); }
+        vec![decode_base64(src).map_err(|e| format!("Not PEM, and not DER either: {e}"))?]
     };
     if ders.is_empty() { return Err("No certificate found".into()); }
     let blocks: Vec<String> = ders.iter().enumerate()
@@ -23,12 +23,14 @@ fn decode_certificates(src: &str) -> Result<String, String> {
     Ok(blocks.join("\n\n"))
 }
 
+/// Short name of an OID (e.g. `sha256WithRSAEncryption`), or its dotted form if unknown.
 fn oid_name(oid: &x509_parser::der_parser::oid::Oid) -> String {
     x509_parser::objects::oid2sn(oid, x509_parser::objects::oid_registry()).map_or_else(|_| oid.to_id_string(), str::to_string)
 }
 
 fn fingerprint(digest: &[u8]) -> String { digest.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":") }
 
+/// The human-readable summary of one DER certificate.
 fn describe(der: &[u8]) -> Result<String, String> {
     use sha2::Digest;
     use x509_parser::{extensions::GeneralName, public_key::PublicKey};

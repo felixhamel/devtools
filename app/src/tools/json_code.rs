@@ -1,6 +1,11 @@
 //! Infers types from a JSON sample and prints them as TypeScript, Rust (serde) or Go.
+//!
+//! The sample is first reduced to a [`Ty`] tree (arrays are merged item by item),
+//! then each object becomes a named struct/interface. Keys are untrusted input:
+//! identifiers are rebuilt from their alphanumeric words and original keys are
+//! only ever emitted inside escaped string literals.
 use serde_json::Value;
-use super::{Category, TextTool, Tool};
+use super::{text::words, Category, TextTool, Tool};
 
 pub fn json_to_code() -> Box<dyn Tool> {
     Box::new(TextTool::new("JSON to Code", "{C}", Category::Data, vec![
@@ -13,9 +18,12 @@ pub fn json_to_code() -> Box<dyn Tool> {
 #[derive(Clone, Copy, PartialEq)]
 enum Lang { TypeScript, Rust, Go }
 
+/// The inferred shape of a JSON value. `Unknown` is `null` or an empty array
+/// (it merges into anything); `Any` means incompatible types were seen.
 #[derive(Clone, PartialEq, Debug)]
 enum Ty { Unknown, Bool, Int, Float, Str, Array(Box<Ty>), Obj(Vec<Field>), Any }
 
+/// An object key. `optional` is set when the key is `null` or missing in some items.
 #[derive(Clone, PartialEq, Debug)]
 struct Field { key: String, ty: Ty, optional: bool }
 
@@ -30,6 +38,7 @@ fn infer(value: &Value) -> Ty {
     }
 }
 
+/// Combines the shapes of two values seen at the same place (e.g. two array items).
 fn merge(a: Ty, b: Ty) -> Ty {
     match (a, b) {
         (Ty::Unknown, t) | (t, Ty::Unknown) => t,
@@ -50,26 +59,13 @@ fn merge(a: Ty, b: Ty) -> Ty {
     }
 }
 
-/// Splits `firstName`, `first_name` or `first-name` into lowercase words.
-fn words(key: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut current = String::new();
-    let mut prev_lower = false;
-    for c in key.chars() {
-        if !c.is_alphanumeric() { if !current.is_empty() { words.push(std::mem::take(&mut current)); } prev_lower = false; continue; }
-        if c.is_uppercase() && prev_lower && !current.is_empty() { words.push(std::mem::take(&mut current)); }
-        prev_lower = c.is_lowercase() || c.is_ascii_digit();
-        current.extend(c.to_lowercase());
-    }
-    if !current.is_empty() { words.push(current); }
-    words
-}
-
+/// `first-name` → `FirstName`; prefixed when it would start with a digit or be empty.
 fn pascal(key: &str) -> String {
     let name: String = words(key).iter().map(|w| { let mut c = w.chars(); c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default() }).collect();
     if name.is_empty() || name.starts_with(|c: char| c.is_ascii_digit()) { format!("Field{name}") } else { name }
 }
 
+/// `firstName` → `first_name`; Rust keywords get a trailing `_`.
 fn snake(key: &str) -> String {
     const KEYWORDS: &[&str] = &["as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while"];
     let name = words(key).join("_");
@@ -77,9 +73,11 @@ fn snake(key: &str) -> String {
     else if KEYWORDS.contains(&name.as_str()) { format!("{name}_") } else { name }
 }
 
+/// Code generator state: the structs discovered so far and the names already taken.
 struct Gen { lang: Lang, structs: Vec<(String, Vec<Field>)>, used: Vec<String> }
 
 impl Gen {
+    /// A struct name derived from `hint`, numbered if already used (`Item`, `Item2`…).
     fn unique(&mut self, hint: &str) -> String {
         let base = pascal(hint);
         let mut name = base.clone();
@@ -89,6 +87,8 @@ impl Gen {
         name
     }
 
+    /// The type expression for `ty` in the target language. Objects are
+    /// registered as new structs named after `hint` (usually the key).
     fn expr(&mut self, ty: &Ty, hint: &str) -> String {
         let l = self.lang;
         let pick = |ts: &str, rs: &str, go: &str| match l { Lang::TypeScript => ts, Lang::Rust => rs, Lang::Go => go }.to_string();
@@ -132,13 +132,21 @@ impl Gen {
                 }
                 Lang::Go => {
                     let (ty, omit) = if f.optional { (format!("*{ty}"), ",omitempty") } else { (ty, "") };
-                    lines.push(format!("\t{} {ty} `json:\"{}{omit}\"`", pascal(&f.key), f.key));
+                    lines.push(format!("\t{} {ty} {}", pascal(&f.key), go_tag(&f.key, omit)));
                 }
             }
         }
         lines.push("}".into());
         lines.join("\n")
     }
+}
+
+/// A Go struct tag for `key`. The key is untrusted input, so it is escaped as a quoted tag value,
+/// and the tag falls back to an interpreted string literal when a raw `...` literal cannot hold it.
+fn go_tag(key: &str, omit: &str) -> String {
+    let value = key.replace('\\', "\\\\").replace('"', "\\\"");
+    let tag = format!("json:\"{value}{omit}\"");
+    if tag.contains('`') || tag.chars().any(char::is_control) { serde_json::to_string(&tag).unwrap() } else { format!("`{tag}`") }
 }
 
 fn generate(src: &str, lang: Lang) -> Result<String, String> {
@@ -195,5 +203,10 @@ mod tests {
         assert!(out.contains("\tUserId int64 `json:\"user_id\"`"), "{out}");
         assert!(out.contains("\tXY *bool `json:\"x-y,omitempty\"`"), "{out}");
         assert!(generate("{", Lang::Go).is_err());
+        // Keys cannot break out of the struct tag.
+        let out = generate(r#"{"a`\nfunc evil() {}\n//": 1, "q\"x": 2}"#, Lang::Go).unwrap();
+        assert!(out.contains(r#"`json:"q\"x"`"#), "{out}");
+        assert!(out.contains(r#"AFuncEvil int64 "json:\"a`\nfunc evil() {}\n//\"""#), "{out}");
+        assert!(!out.contains("\nfunc evil"), "{out}");
     }
 }

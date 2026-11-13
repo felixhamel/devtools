@@ -13,6 +13,8 @@ pub fn curl_to_code() -> Box<dyn Tool> {
 #[derive(Debug, Default, PartialEq)]
 struct Request { method: String, url: String, headers: Vec<(String, String)>, body: Option<String> }
 
+/// Splits the command like a shell would, then interprets the curl options.
+/// The method defaults to GET, or POST when a body is given.
 fn parse_curl(src: &str) -> Result<Request, String> {
     let joined = src.replace("\\\r\n", " ").replace("\\\n", " ");
     let args = shlex::split(&joined).ok_or("Unbalanced quotes in the command")?;
@@ -109,6 +111,7 @@ fn to_python(r: &Request) -> String {
     out
 }
 
+/// Uses `{:?}` for literals: Rust's debug formatting always yields a valid, escaped string literal.
 fn to_rust(r: &Request) -> String {
     let method = match r.method.as_str() {
         m @ ("GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD") => format!(".{}({:?})", m.to_lowercase(), r.url),

@@ -1,23 +1,30 @@
+//! Line Sort/Dedupe: sort, deduplicate and trim a list, one entry per line.
 use eframe::egui;
 use super::{Category, Tool};
-use crate::ui;
+use crate::ui::{self, theme};
 
 #[derive(Default)]
 pub struct Lines { input: String, output: String, sort_desc: bool, dedupe: bool, ignore_case: bool, trim_lines: bool }
 
-impl Lines {
-    fn process(&self, sort: bool, unique: bool) -> String {
-        let mut lines: Vec<String> = self.input.lines().map(|l| if self.trim_lines { l.trim().to_owned() } else { l.to_owned() }).collect();
-        if unique || self.dedupe {
-            let mut seen = std::collections::HashSet::new();
-            lines.retain(|line| seen.insert(if self.ignore_case { line.to_lowercase() } else { line.clone() }));
-        }
-        if sort {
-            lines.sort_by_key(|line| if self.ignore_case { line.to_lowercase() } else { line.clone() });
-            if self.sort_desc { lines.reverse(); }
-        }
-        lines.join("\n")
+/// The options that shape the result, independent of the UI.
+#[derive(Clone, Copy, Default)]
+struct Options { sort: bool, unique: bool, descending: bool, ignore_case: bool, trim: bool }
+
+/// Deduplication keeps the first occurrence; sorting is stable, so equal lines
+/// (e.g. differing only in case with `ignore_case`) keep their input order.
+fn process(input: &str, o: Options) -> String {
+    let mut lines: Vec<&str> = input.lines().map(|l| if o.trim { l.trim() } else { l }).collect();
+    let key = |line: &str| if o.ignore_case { line.to_lowercase() } else { line.to_owned() };
+    if o.unique {
+        let mut seen = std::collections::HashSet::new();
+        lines.retain(|line| seen.insert(key(line)));
     }
+    if o.sort {
+        // Compute each sort key once instead of at every comparison.
+        if o.ignore_case { lines.sort_by_cached_key(|line| line.to_lowercase()) } else { lines.sort() }
+        if o.descending { lines.reverse(); }
+    }
+    lines.join("\n")
 }
 
 impl Tool for Lines {
@@ -40,19 +47,37 @@ impl Tool for Lines {
                 clicked
             });
             left.horizontal_wrapped(|ui| {
-                ui.visuals_mut().selection.bg_fill = egui::Color32::from_rgb(76, 151, 110);
+                ui.visuals_mut().selection.bg_fill = theme::ACCENT_DARK;
                 ui.checkbox(&mut self.ignore_case, "Ignore case");
                 ui.checkbox(&mut self.trim_lines, "Trim whitespace");
                 ui.checkbox(&mut self.dedupe, "Remove duplicates");
                 ui.checkbox(&mut self.sort_desc, "Descending");
             });
             left.add_space(6.0);
-            if let Some((sort, unique)) = clicked { self.output = self.process(sort, unique); }
+            if let Some((sort, unique)) = clicked {
+                let options = Options { sort, unique: unique || self.dedupe, descending: self.sort_desc, ignore_case: self.ignore_case, trim: self.trim_lines };
+                self.output = process(&self.input, options);
+            }
             ui::fill_editor(left, "input", &mut self.input, "Paste your list here…");
             ui::toolbar(right, "Output:", |ui| {
                 if ui.add(ui::action_button("Copy", false)).clicked() { ui.ctx().copy_text(self.output.clone()); }
             });
             ui::fill_editor(right, "output", &mut self.output, "");
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sorts_and_dedupes() {
+        let input = "b\n a\nB\na\nc";
+        let opts = Options { sort: true, unique: true, ..Default::default() };
+        assert_eq!(process(input, opts), " a\nB\na\nb\nc");
+        assert_eq!(process(input, Options { trim: true, ignore_case: true, ..opts }), "a\nb\nc");
+        assert_eq!(process(input, Options { trim: true, descending: true, ..opts }), "c\nb\na\nB");
+        assert_eq!(process("x\ny\nx", Options { unique: true, ..Default::default() }), "x\ny");
     }
 }

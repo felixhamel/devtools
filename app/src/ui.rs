@@ -1,41 +1,81 @@
-//! Shared widgets, fonts and the side-by-side input/output layout used by most tools.
+//! Shared look and widgets: the color theme, system fonts, the side-by-side
+//! input/output layout and the `TextIo` state used by most tools.
 use eframe::egui;
 
-pub const MUTED: egui::Color32 = egui::Color32::from_rgb(166, 170, 169);
+/// Every color the app uses, in one place.
+pub mod theme {
+    use eframe::egui::Color32;
 
-/// Use the macOS system fonts when present (they are read at runtime, never bundled).
-/// Apple Symbols is a fallback so ⌘ ⇧ ⌥ render.
+    pub const WINDOW_BG: Color32 = Color32::from_rgb(46, 44, 44);
+    pub const SIDEBAR_BG: Color32 = Color32::from_rgb(37, 37, 39);
+    pub const SEARCH_BG: Color32 = Color32::from_rgb(31, 33, 32);
+    pub const SEARCH_STROKE: Color32 = Color32::from_rgb(72, 80, 75);
+    pub const SEARCH_ICON: Color32 = Color32::from_rgb(151, 164, 155);
+    pub const ICON: Color32 = Color32::from_rgb(180, 180, 182);
+    pub const ROW_HOVER: Color32 = Color32::from_rgb(48, 48, 50);
+    pub const ROW_SELECTED: Color32 = Color32::from_rgb(65, 65, 68);
+    pub const BADGE_BG: Color32 = Color32::from_rgb(52, 75, 65);
+    /// Mint green used for badges, primary buttons and checked boxes.
+    pub const ACCENT: Color32 = Color32::from_rgb(130, 220, 169);
+    pub const ACCENT_STRONG: Color32 = Color32::from_rgb(119, 201, 153);
+    pub const ACCENT_DARK: Color32 = Color32::from_rgb(76, 151, 110);
+    pub const ON_ACCENT: Color32 = Color32::from_rgb(20, 38, 28);
+    pub const BUTTON: Color32 = Color32::from_rgb(70, 70, 72);
+    pub const BUTTON_HOVER: Color32 = Color32::from_rgb(62, 62, 64);
+    pub const PILL: Color32 = Color32::from_rgb(58, 58, 58);
+    pub const EDITOR_BG: Color32 = Color32::from_rgb(31, 31, 31);
+    pub const EDITOR_STROKE: Color32 = Color32::from_rgb(58, 58, 58);
+    pub const TEXT: Color32 = Color32::from_rgb(225, 225, 225);
+    pub const TEXT_STRONG: Color32 = Color32::from_rgb(230, 230, 230);
+    pub const MUTED: Color32 = Color32::from_rgb(166, 170, 169);
+    pub const SUBTLE: Color32 = Color32::GRAY;
+}
+
+pub use theme::MUTED;
+
+/// Dark visuals with the app's window background.
+pub fn apply_visuals(ctx: &egui::Context) {
+    let mut visuals = egui::Visuals::dark();
+    visuals.panel_fill = theme::WINDOW_BG;
+    visuals.window_fill = theme::WINDOW_BG;
+    ctx.set_visuals(visuals);
+}
+
+/// Uses the macOS system fonts (SF Pro / SF Mono) when present. They are read
+/// from disk at startup, never bundled. Apple Symbols is added as a fallback so
+/// that ⌘ ⇧ ⌥ render. On other systems egui's built-in fonts are kept.
 pub fn install_system_fonts(ctx: &egui::Context) {
+    const SYMBOLS: &str = "/System/Library/Fonts/Apple Symbols.ttf";
     let mut fonts = egui::FontDefinitions::default();
-    let mut add = |name: &str, path: &str, family: egui::FontFamily, first: bool| {
+    let mut add = |name: &str, path: &str, family: egui::FontFamily, preferred: bool| {
         let Ok(bytes) = std::fs::read(path) else { return };
         fonts.font_data.insert(name.into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
         let list = fonts.families.entry(family).or_default();
-        if first { list.insert(0, name.into()) } else { list.push(name.into()) }
+        if preferred { list.insert(0, name.into()) } else { list.push(name.into()) }
     };
     add("sf", "/System/Library/Fonts/SFNS.ttf", egui::FontFamily::Proportional, true);
     add("sf-mono", "/System/Library/Fonts/SFNSMono.ttf", egui::FontFamily::Monospace, true);
-    add("symbols", "/System/Library/Fonts/Apple Symbols.ttf", egui::FontFamily::Proportional, false);
-    add("symbols", "/System/Library/Fonts/Apple Symbols.ttf", egui::FontFamily::Monospace, false);
+    add("symbols", SYMBOLS, egui::FontFamily::Proportional, false);
+    add("symbols", SYMBOLS, egui::FontFamily::Monospace, false);
     ctx.set_fonts(fonts);
 }
 
+/// A muted one-line explanation shown under a tool's title.
 pub fn description(ui: &mut egui::Ui, text: &str) {
     ui.label(egui::RichText::new(text).color(MUTED));
 }
 
+/// The dark rounded box around editors and previews.
 pub fn editor_frame() -> egui::Frame {
-    egui::Frame::new().fill(egui::Color32::from_rgb(31, 31, 31))
-        .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(58, 58, 58)))
+    egui::Frame::new().fill(theme::EDITOR_BG)
+        .stroke(egui::Stroke::new(1.0_f32, theme::EDITOR_STROKE))
         .corner_radius(6).inner_margin(8)
 }
 
+/// A compact toolbar button; the primary one is mint green.
 pub fn action_button(label: &str, primary: bool) -> egui::Button<'_> {
-    egui::Button::new(egui::RichText::new(label).size(12.5).color(if primary {
-        egui::Color32::from_rgb(20, 38, 28)
-    } else { egui::Color32::from_rgb(225, 225, 225) }))
-        .fill(if primary { egui::Color32::from_rgb(119, 201, 153) } else { egui::Color32::from_rgb(70, 70, 72) })
-        .corner_radius(5)
+    let (fill, text) = if primary { (theme::ACCENT_STRONG, theme::ON_ACCENT) } else { (theme::BUTTON, theme::TEXT) };
+    egui::Button::new(egui::RichText::new(label).size(12.5).color(text)).fill(fill).corner_radius(5)
 }
 
 /// A pane header: a bold label followed by compact buttons, wrapping when narrow.
@@ -44,7 +84,7 @@ pub fn toolbar<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui
         ui.spacing_mut().button_padding = egui::vec2(9.0, 3.0);
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
         ui.horizontal_wrapped(|ui| {
-            ui.label(egui::RichText::new(label).strong().color(egui::Color32::from_rgb(220, 220, 220)));
+            ui.label(egui::RichText::new(label).strong().color(theme::TEXT));
             ui.add_space(4.0);
             add(ui)
         }).inner
@@ -59,6 +99,7 @@ pub fn split<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui, &mut egui::Ui
 }
 
 /// A scrollable monospace editor that fills the remaining space of `ui`.
+/// `id` must be unique within the tool so each editor keeps its own scroll position.
 pub fn fill_editor(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str) -> egui::Response {
     editor_frame().show(ui, |ui| {
         let size = ui.available_size();
@@ -69,10 +110,13 @@ pub fn fill_editor(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str) -
     }).inner
 }
 
+/// Shows `error` in red, or nothing when it is empty.
 pub fn error_label(ui: &mut egui::Ui, error: &str) {
     if !error.is_empty() { ui.colored_label(egui::Color32::LIGHT_RED, error); ui.add_space(4.0); }
 }
 
+/// Reads text from the system clipboard. egui only exposes clipboard text through
+/// paste events, so the "Clipboard" buttons go through `arboard` directly.
 pub fn clipboard_text() -> Result<String, String> {
     arboard::Clipboard::new().and_then(|mut c| c.get_text()).map_err(|e| format!("Clipboard: {e}"))
 }
@@ -82,14 +126,15 @@ pub fn clipboard_text() -> Result<String, String> {
 pub struct TextIo { pub input: String, pub output: String, pub error: String }
 
 impl TextIo {
+    /// Stores a transform result: the value goes to the output, an error replaces it.
     pub fn apply(&mut self, result: Result<String, String>) {
         match result { Ok(value) => { self.output = value; self.error.clear(); } Err(error) => { self.output.clear(); self.error = error; } }
     }
 
     pub fn clear(&mut self) { *self = Self::default(); }
 
-    /// Draws the input pane and returns the index of the action that was clicked.
-    /// The first action is the primary one.
+    /// Draws the input pane (toolbar + editor) and returns the index of the
+    /// action button that was clicked this frame. The first action is the primary one.
     pub fn input_pane(&mut self, ui: &mut egui::Ui, actions: &[&str], hint: &str) -> Option<usize> {
         let clicked = toolbar(ui, "Input:", |ui| {
             if ui.add(action_button("Clipboard", false)).clicked() {
@@ -107,6 +152,7 @@ impl TextIo {
         clicked
     }
 
+    /// Draws the output pane: toolbar with Copy, the error if any, then the result.
     pub fn output_pane(&mut self, ui: &mut egui::Ui) {
         toolbar(ui, "Output:", |ui| {
             if ui.add(action_button("Copy", false)).clicked() { ui.ctx().copy_text(self.output.clone()); }

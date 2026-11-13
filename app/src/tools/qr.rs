@@ -1,3 +1,4 @@
+//! QR Code Reader/Generator.
 use eframe::egui;
 use super::{Category, Tool};
 use crate::ui;
@@ -36,6 +37,7 @@ impl Tool for Qr {
         for file in ctx.input(|i| i.raw.dropped_files.clone()) {
             if let Some(path) = &file.path { self.read_file(path); }
         }
+        // Regenerate the QR code only when the text changed since the last render.
         if self.rendered.as_deref() != Some(self.text.as_str()) {
             self.rendered = Some(self.text.clone());
             self.texture = None;
@@ -89,6 +91,7 @@ impl Tool for Qr {
     }
 }
 
+/// Renders `text` as a black-on-white QR code with a quiet zone, `SCALE` px per module.
 fn encode(text: &str) -> Result<Rgba, String> {
     let code = qrcode::QrCode::new(text.as_bytes()).map_err(|e| format!("Cannot encode: {e}"))?;
     let modules = code.width();
@@ -108,6 +111,7 @@ fn encode(text: &str) -> Result<Rgba, String> {
     Ok(Rgba { width: side, height: side, pixels })
 }
 
+/// Finds and decodes the first QR code in an RGBA image.
 fn decode(image: &Rgba) -> Result<String, String> {
     let luma = |x: usize, y: usize| {
         let p = (y * image.width + x) * 4;

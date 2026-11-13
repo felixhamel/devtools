@@ -1,12 +1,14 @@
+//! Base64 Image: image file → data URI, and Base64 / data URI → preview.
 use base64::{engine::general_purpose::STANDARD, Engine};
 use eframe::egui;
-use super::{Category, Tool};
+use super::{encoding::decode_base64, Category, Tool};
 use crate::ui;
 
 #[derive(Default)]
 pub struct Base64Image { text: String, path: String, info: String, error: String, texture: Option<egui::TextureHandle> }
 
 impl Base64Image {
+    /// Decodes `bytes` as an image and uploads it as the preview texture.
     fn show(&mut self, ctx: &egui::Context, bytes: &[u8]) {
         match load(bytes) {
             Ok((info, image)) => { self.info = info; self.error.clear(); self.texture = Some(ctx.load_texture("base64-image", image, Default::default())); }
@@ -14,6 +16,7 @@ impl Base64Image {
         }
     }
 
+    /// Encodes image bytes as a data URI and previews them.
     fn encode_bytes(&mut self, ctx: &egui::Context, bytes: &[u8]) {
         match data_uri(bytes) { Ok(uri) => { self.text = uri; self.show(ctx, bytes); } Err(e) => { self.error = e; self.texture = None; } }
     }
@@ -33,6 +36,7 @@ impl Tool for Base64Image {
 
     fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        // Files dropped anywhere on the window while this tool is open.
         for file in ctx.input(|i| i.raw.dropped_files.clone()) {
             if let Some(path) = &file.path { self.encode_file(&ctx, path); }
             else if let Some(bytes) = &file.bytes { self.encode_bytes(&ctx, bytes); }
@@ -76,21 +80,23 @@ impl Tool for Base64Image {
     }
 }
 
+/// `data:image/png;base64,…` with the MIME type detected from the bytes.
 fn data_uri(bytes: &[u8]) -> Result<String, String> {
     let format = image::guess_format(bytes).map_err(|_| "Unsupported or unrecognized image format".to_string())?;
     Ok(format!("data:{};base64,{}", format.to_mime_type(), STANDARD.encode(bytes)))
 }
 
+/// Accepts a full data URI or bare Base64.
 fn decode(text: &str) -> Result<Vec<u8>, String> {
     let text = text.trim();
     let payload = match text.strip_prefix("data:") {
         Some(rest) => rest.split_once(',').map(|(_, data)| data).ok_or("Data URI has no comma before the Base64 data")?,
         None => text,
     };
-    let compact: String = payload.chars().filter(|c| !c.is_whitespace()).collect();
-    STANDARD.decode(compact).map_err(|e| format!("Invalid Base64: {e}"))
+    decode_base64(payload)
 }
 
+/// Decodes an image into pixels plus a one-line summary (format, size, bytes).
 fn load(bytes: &[u8]) -> Result<(String, egui::ColorImage), String> {
     let format = image::guess_format(bytes).map_err(|_| "Unsupported or unrecognized image format".to_string())?;
     let image = image::load_from_memory_with_format(bytes, format).map_err(|e| e.to_string())?.into_rgba8();

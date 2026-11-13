@@ -1,3 +1,4 @@
+//! Cron Job Parser.
 use super::{Category, TextTool, Tool};
 
 pub fn cron() -> Box<dyn Tool> {
@@ -5,6 +6,7 @@ pub fn cron() -> Box<dyn Tool> {
         .describe("Enter a cron expression (5 fields, or 6 with seconds first), e.g. */15 9-17 * * MON-FRI"))
 }
 
+/// Describes the expression and lists its next 5 run times after `now`.
 fn cron_report<Tz: chrono::TimeZone>(src: &str, now: chrono::DateTime<Tz>) -> Result<String, String>
 where Tz::Offset: std::fmt::Display {
     let cron: croner::Cron = src.trim().parse().map_err(|e: croner::errors::CronError| e.to_string())?;

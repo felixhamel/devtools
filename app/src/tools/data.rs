@@ -1,3 +1,4 @@
+//! Data tools: JSON formatting and URL parsing.
 use serde_json::Value;
 use super::{Category, TextTool, Tool};
 
@@ -5,14 +6,17 @@ pub fn json_format() -> Box<dyn Tool> {
     Box::new(TextTool::new("JSON Format/Validate", "{}", Category::Data, vec![("Format", json_pretty), ("Minify", json_minify)]))
 }
 
+/// Parses JSON, keeping keys in their original order (serde_json `preserve_order`).
+fn parse_json(input: &str) -> Result<Value, String> {
+    serde_json::from_str(input).map_err(|e| e.to_string())
+}
+
 fn json_pretty(input: &str) -> Result<String, String> {
-    let value: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
-    serde_json::to_string_pretty(&value).map_err(|e| e.to_string())
+    serde_json::to_string_pretty(&parse_json(input)?).map_err(|e| e.to_string())
 }
 
 fn json_minify(input: &str) -> Result<String, String> {
-    let value: Value = serde_json::from_str(input).map_err(|e| e.to_string())?;
-    serde_json::to_string(&value).map_err(|e| e.to_string())
+    serde_json::to_string(&parse_json(input)?).map_err(|e| e.to_string())
 }
 
 pub fn url_parser() -> Box<dyn Tool> {
@@ -20,6 +24,7 @@ pub fn url_parser() -> Box<dyn Tool> {
         .describe("Paste a URL to split it into its parts and decoded query parameters."))
 }
 
+/// Lists every component of a URL, then its query parameters percent-decoded.
 fn parse_url(input: &str) -> Result<String, String> {
     let url = url::Url::parse(input.trim()).map_err(|e| format!("Invalid URL: {e}"))?;
     let or_none = |s: Option<&str>| s.filter(|s| !s.is_empty()).unwrap_or("(none)").to_string();
