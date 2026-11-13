@@ -1,0 +1,22 @@
+# Rust build output
+/app/target/
+
+# macOS
+.DS_Store
+
+# Craft Anything project files (not part of the app)
+/craft.json
+/feed.json
+/usage.json
+/build-activity.log
+/inbox/
+/pinned/
+/capture/
+/checks/
+/attachments/
+/investigation.cany/
+/app/MECHANICS.md
+/app/mechanics.json
+
+# Icon proposals that were not chosen
+/app/assets/icon-candidates/
