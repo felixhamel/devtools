@@ -1,9 +1,10 @@
 //! Cron Job Parser.
 use super::{Category, TextTool, Tool};
+use crate::ui::icon;
 
 pub fn cron() -> Box<dyn Tool> {
-    Box::new(TextTool::new("Cron Job Parser", "CR", Category::Date, vec![("Parse", |s| cron_report(s, chrono::Local::now()))])
-        .describe("Enter a cron expression (5 fields, or 6 with seconds first), e.g. */15 9-17 * * MON-FRI"))
+    Box::new(TextTool::new("Cron Job Parser", icon::TIMER, Category::Date, vec![("Parse", |s| cron_report(s, chrono::Local::now()))])
+        .describe("Enter a cron expression (5 fields, or 6 with seconds first), e.g. */15 9-17 * * MON-FRI").sample(r#"*/15 9-17 * * MON-FRI"#).key_value_output())
 }
 
 /// Describes the expression and lists its next 5 run times after `now`.

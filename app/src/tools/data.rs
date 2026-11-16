@@ -1,9 +1,10 @@
 //! Data tools: JSON formatting and URL parsing.
 use serde_json::Value;
 use super::{Category, TextTool, Tool};
+use crate::ui::icon;
 
 pub fn json_format() -> Box<dyn Tool> {
-    Box::new(TextTool::new("JSON Format/Validate", "{}", Category::Data, vec![("Format", json_pretty), ("Minify", json_minify)]))
+    Box::new(TextTool::new("JSON Format/Validate", icon::BRACKETS_CURLY, Category::Data, vec![("Format", json_pretty), ("Minify", json_minify)]).sample(r#"{"name":"DevUtils","version":2,"tags":["json","base64"],"settings":{"theme":"dark","fontSize":13,"beta":false}}"#).syntax("json"))
 }
 
 /// Parses JSON, keeping keys in their original order (serde_json `preserve_order`).
@@ -20,8 +21,8 @@ fn json_minify(input: &str) -> Result<String, String> {
 }
 
 pub fn url_parser() -> Box<dyn Tool> {
-    Box::new(TextTool::new("URL Parser", "URL", Category::Data, vec![("Parse", parse_url)])
-        .describe("Paste a URL to split it into its parts and decoded query parameters."))
+    Box::new(TextTool::new("URL Parser", icon::LINK, Category::Data, vec![("Parse", parse_url)])
+        .describe("Paste a URL to split it into its parts and decoded query parameters.").sample(r#"https://ada:secret@api.example.com:8443/v1/search?q=rust%20egui&page=2#results"#).key_value_output())
 }
 
 /// Lists every component of a URL, then its query parameters percent-decoded.

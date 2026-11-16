@@ -1,14 +1,17 @@
 //! Text Diff Checker: line-by-line comparison of two texts.
 use eframe::egui;
 use super::{Category, Tool};
-use crate::ui;
+use crate::ui::{self, icon, Highlight};
+
+const SAMPLE_ORIGINAL: &str = "name: DevUtils\nversion: 1.0\nfeatures:\n  - json\n  - base64\n  - regex";
+const SAMPLE_MODIFIED: &str = "name: DevUtils\nversion: 1.1\nfeatures:\n  - json\n  - regex\n  - diff";
 
 #[derive(Default)]
-pub struct Diff { left: String, right: String, output: String }
+pub struct Diff { left: String, right: String, output: String, error: String }
 
 impl Tool for Diff {
     fn name(&self) -> &'static str { "Text Diff Checker" }
-    fn badge(&self) -> &'static str { "DI" }
+    fn icon(&self) -> &'static str { icon::GIT_DIFF }
     fn category(&self) -> Category { Category::Text }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
@@ -18,23 +21,27 @@ impl Tool for Diff {
         let height = (ui.available_height() * 0.55).max(120.0);
         ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
             ui::split(ui, |left, right| {
-                ui::toolbar(left, "Original:", |ui| {
-                    if ui.add(ui::action_button("Clipboard", false)).clicked() { if let Ok(text) = ui::clipboard_text() { self.left = text; } }
-                });
+                ui::toolbar(left, "Original:", |ui| { ui::paste_button(ui, &mut self.left, &mut self.error); });
                 ui::fill_editor(left, "original", &mut self.left, "Original text…");
-                ui::toolbar(right, "Modified:", |ui| {
-                    if ui.add(ui::action_button("Clipboard", false)).clicked() { if let Ok(text) = ui::clipboard_text() { self.right = text; } }
-                });
+                ui::toolbar(right, "Modified:", |ui| { ui::paste_button(ui, &mut self.right, &mut self.error); });
                 ui::fill_editor(right, "modified", &mut self.right, "Modified text…");
             });
         });
         ui.add_space(10.0);
         ui::toolbar(ui, "Differences:", |ui| {
-            if ui.add(ui::action_button("Compare", true)).clicked() { self.output = diff_lines(&self.left, &self.right); }
-            if ui.add(ui::action_button("Clear", false)).clicked() { *self = Self::default(); }
-            if ui.add(ui::action_button("Copy", false)).clicked() { ui.ctx().copy_text(self.output.clone()); }
+            if ui.add(ui::icon_button(icon::GIT_DIFF, "Compare", true)).clicked() { self.output = diff_lines(&self.left, &self.right); self.error.clear(); }
+            if ui::sample_button(ui) { self.load_sample(); }
+            if ui::clear_button(ui) { *self = Self::default(); }
+            ui::copy_button(ui, &self.output);
         });
-        ui::fill_editor(ui, "differences", &mut self.output, "");
+        ui::error_label(ui, &self.error);
+        ui::code_editor(ui, "differences", &mut self.output, "", Highlight::Diff);
+    }
+
+    fn load_sample(&mut self) {
+        self.left = SAMPLE_ORIGINAL.into();
+        self.right = SAMPLE_MODIFIED.into();
+        self.output = diff_lines(&self.left, &self.right);
     }
 }
 

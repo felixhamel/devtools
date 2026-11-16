@@ -5,33 +5,38 @@
 //! implemented in `css.rs` and `html.rs`: no crate keeps comments and supports
 //! SCSS, and none pretty-prints HTML.
 use super::{Category, TextTool, Tool};
+use crate::ui::icon;
 
 mod css;
 mod html;
 
 pub fn html() -> Box<dyn Tool> {
-    Box::new(TextTool::new("HTML Beautify/Minify", "HT", Category::Code, vec![("Beautify", html::beautify), ("Minify", html::minify)]))
+    Box::new(TextTool::new("HTML Beautify/Minify", icon::FILE_HTML, Category::Code, vec![("Beautify", html::beautify), ("Minify", html::minify)]).sample(r#"<!DOCTYPE html><html><head><title>Hello</title><style>body{font-family:system-ui}</style></head><body><nav><a href="/">Home</a><a href="/about">About</a></nav><main><h1>Hello, world</h1><p>Some <b>bold</b> text.</p></main></body></html>"#).syntax("html"))
 }
 
 pub fn css() -> Box<dyn Tool> {
-    Box::new(TextTool::new("CSS Beautify/Minify", "CS", Category::Code, vec![("Beautify", |s| css::beautify(s, false)), ("Minify", |s| css::minify(s, false))]))
+    Box::new(TextTool::new("CSS Beautify/Minify", icon::FILE_CSS, Category::Code, vec![("Beautify", |s| css::beautify(s, false)), ("Minify", |s| css::minify(s, false))]).sample(r#"body{margin:0;font-family:system-ui}/* layout */.nav,.footer{display:flex;gap:8px}@media (max-width:600px){.nav{display:none}}"#).syntax("css"))
 }
 
 pub fn scss() -> Box<dyn Tool> {
-    Box::new(TextTool::new("SCSS Beautify/Minify", "SC", Category::Code, vec![("Beautify", |s| css::beautify(s, true)), ("Minify", |s| css::minify(s, true))]))
+    Box::new(TextTool::new("SCSS Beautify/Minify", icon::PAINT_BRUSH, Category::Code, vec![("Beautify", |s| css::beautify(s, true)), ("Minify", |s| css::minify(s, true))]).sample(r#"$accent:#56d28f;
+// card component
+.card{padding:8px;&:hover{color:$accent}.title{font-weight:bold;margin:#{$gap} 0}}"#).syntax("css"))
 }
 
 pub fn js() -> Box<dyn Tool> {
-    Box::new(TextTool::new("JS Beautify/Minify", "JS", Category::Code, vec![("Beautify", |s| js_rewrite(s, false)), ("Minify", |s| js_rewrite(s, true))])
-        .describe("Reprints JavaScript (JSX allowed). Beautify normalizes quotes and spacing; Minify also shortens names."))
+    Box::new(TextTool::new("JS Beautify/Minify", icon::FILE_JS, Category::Code, vec![("Beautify", |s| js_rewrite(s, false)), ("Minify", |s| js_rewrite(s, true))])
+        .describe("Reprints JavaScript (JSX allowed). Beautify normalizes quotes and spacing; Minify also shortens names.").sample(r#"// greet someone
+function greet(name){const message=`Hello, ${name}!`;return message}
+export const users=['Ada','Grace'].map(greet);console.log(users)"#).syntax("js"))
 }
 
 pub fn xml() -> Box<dyn Tool> {
-    Box::new(TextTool::new("XML Beautify/Minify", "XM", Category::Code, vec![("Beautify", |s| xml_rewrite(s, true)), ("Minify", |s| xml_rewrite(s, false))]))
+    Box::new(TextTool::new("XML Beautify/Minify", icon::FILE_CODE, Category::Code, vec![("Beautify", |s| xml_rewrite(s, true)), ("Minify", |s| xml_rewrite(s, false))]).sample(r#"<?xml version="1.0"?><note id="42"><to>Ada</to><from>Grace</from><body>Hello <b>there</b></body><tags/></note>"#).syntax("xml"))
 }
 
 pub fn sql() -> Box<dyn Tool> {
-    Box::new(TextTool::new("SQL Formatter", "SQ", Category::Code, vec![("Format", sql_format)]))
+    Box::new(TextTool::new("SQL Formatter", icon::DATABASE, Category::Code, vec![("Format", sql_format)]).sample(r#"select u.id, u.name, count(o.id) as orders from users u left join orders o on o.user_id = u.id where u.active = true group by u.id, u.name order by orders desc limit 10"#).syntax("sql"))
 }
 
 fn sql_format(src: &str) -> Result<String, String> {

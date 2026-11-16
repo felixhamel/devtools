@@ -1,10 +1,34 @@
 //! Certificate Decoder (X.509): PEM or DER → subject, validity, SANs, key and fingerprints.
 use super::{encoding::decode_base64, Category, TextTool, Tool};
+use crate::ui::icon;
 
 pub fn certificate() -> Box<dyn Tool> {
-    Box::new(TextTool::new("Certificate Decoder (X.509)", "CRT", Category::Security, vec![("Decode", decode_certificates)])
-        .describe("Paste one or more PEM certificates (-----BEGIN CERTIFICATE-----) or Base64 DER."))
+    Box::new(TextTool::new("Certificate Decoder (X.509)", icon::CERTIFICATE, Category::Security, vec![("Decode", decode_certificates)])
+        .describe("Paste one or more PEM certificates (-----BEGIN CERTIFICATE-----) or Base64 DER.").sample(SAMPLE_PEM).key_value_output())
 }
+
+/// A self-signed certificate (example.test, generated with openssl) for the
+/// "Sample" button and the tests.
+const SAMPLE_PEM: &str = "-----BEGIN CERTIFICATE-----
+MIIDTzCCAjegAwIBAgIULfQKeSZfsVttDxjdv2q9FtlzVk4wDQYJKoZIhvcNAQEL
+BQAwLzEVMBMGA1UEAwwMZXhhbXBsZS50ZXN0MRYwFAYDVQQKDA1EZXZVdGlscyBU
+ZXN0MB4XDTI2MTExMzIwNTgxMloXDTM2MTExMDIwNTgxMlowLzEVMBMGA1UEAwwM
+ZXhhbXBsZS50ZXN0MRYwFAYDVQQKDA1EZXZVdGlscyBUZXN0MIIBIjANBgkqhkiG
+9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu/YDG+DRuiMVFehhZaByP8XEzX6OC+xFdDha
+Q9C6mYMEUHBJ1tSVeTBEMyPqzP2EbahoyMZguslvtLjWWklpFmbCuvncUJXDbDcz
+BYNfXwmnHK2eoFlk1xSB9jeiKqPpd3X+c2OrWjUQsVbU/fXcy4/boFDyxaDNVhsM
+Ui06ZiLj8988YiR+gucbVZfvQuHYZjlUREIbTgfqrZpjig/W5kHw2UbM5aSt2ACe
+tm9q/GMjJJICVMs6AcTgBUD4iwgdDVHs5Sb5J5CrcZH5hKtb8ehfj9aSbbNlzS+B
+zWYinZtEJoElY/uoRjh5IBJA29yQTbGzNOvEN9jlOlTfcD0RIQIDAQABo2MwYTAd
+BgNVHQ4EFgQUW7et5oktj1vi+7v8+6O+yrWdTHQwDwYDVR0TAQH/BAUwAwEB/zAv
+BgNVHREEKDAmggxleGFtcGxlLnRlc3SCEHd3dy5leGFtcGxlLnRlc3SHBH8AAAEw
+DQYJKoZIhvcNAQELBQADggEBAJLk1+ww4+50vCppPBDpmTAk+v08ALvWmN7xdZMj
+qLW54JeG7qHFFdRhFRWTugHkq28wLQePquNxHsLOlIEXvSkxzZFRK5sJxzS1TsQB
+56E4wqZFz4yPoPe/dFeooE3UMa+VVAX/OSfjOUlKWjD5rpZ0EmdLHVqZqFJeJSWW
+W194Z5d+B1nOyFEVbQrccrAKSsFqEGTVC5Yb19afcMIB3epygzTu/Pvk3TnxSKSD
+hAz7MV4K6FT23r2G9isgcoJ1KpW0OcUrJxElDSkAqa0WRrWy60IYg13wOZETMKac
+z9j1itOwfIKkpDVQMQI6vgfgw+/uOwQlETpzJvMRaawtnK0=
+-----END CERTIFICATE-----";
 
 /// Accepts one or more PEM blocks, or a single Base64-encoded DER certificate.
 fn decode_certificates(src: &str) -> Result<String, String> {
@@ -81,31 +105,10 @@ fn describe(der: &[u8]) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // Self-signed test certificate generated with openssl for these tests.
-    const PEM: &str = "-----BEGIN CERTIFICATE-----
-MIIDTzCCAjegAwIBAgIULfQKeSZfsVttDxjdv2q9FtlzVk4wDQYJKoZIhvcNAQEL
-BQAwLzEVMBMGA1UEAwwMZXhhbXBsZS50ZXN0MRYwFAYDVQQKDA1EZXZVdGlscyBU
-ZXN0MB4XDTI2MTExMzIwNTgxMloXDTM2MTExMDIwNTgxMlowLzEVMBMGA1UEAwwM
-ZXhhbXBsZS50ZXN0MRYwFAYDVQQKDA1EZXZVdGlscyBUZXN0MIIBIjANBgkqhkiG
-9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu/YDG+DRuiMVFehhZaByP8XEzX6OC+xFdDha
-Q9C6mYMEUHBJ1tSVeTBEMyPqzP2EbahoyMZguslvtLjWWklpFmbCuvncUJXDbDcz
-BYNfXwmnHK2eoFlk1xSB9jeiKqPpd3X+c2OrWjUQsVbU/fXcy4/boFDyxaDNVhsM
-Ui06ZiLj8988YiR+gucbVZfvQuHYZjlUREIbTgfqrZpjig/W5kHw2UbM5aSt2ACe
-tm9q/GMjJJICVMs6AcTgBUD4iwgdDVHs5Sb5J5CrcZH5hKtb8ehfj9aSbbNlzS+B
-zWYinZtEJoElY/uoRjh5IBJA29yQTbGzNOvEN9jlOlTfcD0RIQIDAQABo2MwYTAd
-BgNVHQ4EFgQUW7et5oktj1vi+7v8+6O+yrWdTHQwDwYDVR0TAQH/BAUwAwEB/zAv
-BgNVHREEKDAmggxleGFtcGxlLnRlc3SCEHd3dy5leGFtcGxlLnRlc3SHBH8AAAEw
-DQYJKoZIhvcNAQELBQADggEBAJLk1+ww4+50vCppPBDpmTAk+v08ALvWmN7xdZMj
-qLW54JeG7qHFFdRhFRWTugHkq28wLQePquNxHsLOlIEXvSkxzZFRK5sJxzS1TsQB
-56E4wqZFz4yPoPe/dFeooE3UMa+VVAX/OSfjOUlKWjD5rpZ0EmdLHVqZqFJeJSWW
-W194Z5d+B1nOyFEVbQrccrAKSsFqEGTVC5Yb19afcMIB3epygzTu/Pvk3TnxSKSD
-hAz7MV4K6FT23r2G9isgcoJ1KpW0OcUrJxElDSkAqa0WRrWy60IYg13wOZETMKac
-z9j1itOwfIKkpDVQMQI6vgfgw+/uOwQlETpzJvMRaawtnK0=
------END CERTIFICATE-----";
 
     #[test]
     fn decodes_pem_matching_openssl() {
-        let out = decode_certificates(PEM).unwrap();
+        let out = decode_certificates(SAMPLE_PEM).unwrap();
         // Values below are what `openssl x509 -noout -fingerprint -sha256 -serial` reports.
         assert!(out.contains("SHA-256 fingerprint: 28:17:E8:CD:9A:F9:0B:BF:F3:74:11:3A:52:83:33:12:14:CE:A6:09:E1:27:9F:88:A4:8A:7C:E0:CA:51:48:2F"), "{out}");
         assert!(out.contains("Serial number: 2D:F4:0A:79:26:5F:B1:5B:6D:0F:18:DD:BF:6A:BD:16:D9:73:56:4E"), "{out}");
@@ -118,9 +121,9 @@ z9j1itOwfIKkpDVQMQI6vgfgw+/uOwQlETpzJvMRaawtnK0=
 
     #[test]
     fn accepts_der_base64_and_chains() {
-        let body: String = PEM.lines().filter(|l| !l.starts_with("-----")).collect();
+        let body: String = SAMPLE_PEM.lines().filter(|l| !l.starts_with("-----")).collect();
         assert!(decode_certificates(&body).unwrap().contains("Subject: CN=example.test"));
-        let chain = decode_certificates(&format!("{PEM}\n{PEM}")).unwrap();
+        let chain = decode_certificates(&format!("{SAMPLE_PEM}\n{SAMPLE_PEM}")).unwrap();
         assert!(chain.starts_with("Certificate 1\n") && chain.contains("\n\nCertificate 2\n"), "{chain}");
         assert!(decode_certificates("hello").is_err());
     }

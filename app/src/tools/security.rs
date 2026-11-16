@@ -1,9 +1,14 @@
 //! Security tools: JWT decoding and hashes.
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use super::{Category, TextTool, Tool};
+use crate::ui::icon;
+
+/// The public example token from jwt.io ("John Doe", signed with the demo secret
+/// "your-256-bit-secret"). Not a credential, hence the secret-scanner exception.
+const SAMPLE_JWT: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"; // gitleaks:allow
 
 pub fn jwt() -> Box<dyn Tool> {
-    Box::new(TextTool::new("JWT Debugger", "JW", Category::Security, vec![("Inspect", jwt_decode)]))
+    Box::new(TextTool::new("JWT Debugger", icon::KEY, Category::Security, vec![("Inspect", jwt_decode)]).sample(SAMPLE_JWT))
 }
 
 /// Decodes a JWT's header and payload (Base64URL JSON). The signature is not checked.
@@ -19,8 +24,8 @@ fn jwt_decode(input: &str) -> Result<String, String> {
 }
 
 pub fn hash() -> Box<dyn Tool> {
-    Box::new(TextTool::new("Hash Generator", "#", Category::Security, vec![("Generate", hashes)])
-        .describe("Hash the exact input text (UTF-8 bytes, whitespace included)."))
+    Box::new(TextTool::new("Hash Generator", icon::HASH, Category::Security, vec![("Generate", hashes)])
+        .describe("Hash the exact input text (UTF-8 bytes, whitespace included).").sample(r#"The quick brown fox jumps over the lazy dog"#).key_value_output())
 }
 
 /// MD5, SHA-1, SHA-256 and SHA-512 of the input's UTF-8 bytes, as lowercase hex.

@@ -9,7 +9,7 @@ mod tools;
 mod ui;
 
 use tools::{Category, Tool};
-use ui::theme;
+use ui::{icon, theme};
 
 /// Height of the transparent title bar area (the traffic-light buttons sit in it on macOS).
 const TITLE_BAR: f32 = 30.0;
@@ -31,19 +31,44 @@ struct App {
 /// Used to check that a build starts and draws.
 struct Screenshot { path: String, frames: u32 }
 
+/// Command-line options, mostly for checking the interface:
+/// `--tool <name>` opens a tool (name matched case-insensitively),
+/// `--sample` loads its example, `--screenshot <path>` captures the window and quits.
+#[derive(Default)]
+struct Args { screenshot: Option<String>, tool: Option<String>, sample: bool }
+
+impl Args {
+    fn parse() -> Self {
+        let mut args = Args::default();
+        let mut it = std::env::args().skip(1);
+        while let Some(arg) = it.next() {
+            match arg.as_str() {
+                "--screenshot" => args.screenshot = it.next(),
+                "--tool" => args.tool = it.next(),
+                "--sample" => args.sample = true,
+                _ => {}
+            }
+        }
+        args
+    }
+}
+
 impl App {
-    fn new(cc: &eframe::CreationContext, icon: &image::RgbaImage, screenshot: Option<String>) -> Self {
+    fn new(cc: &eframe::CreationContext, icon: &image::RgbaImage, args: Args) -> Self {
         ui::apply_visuals(&cc.egui_ctx);
-        ui::install_system_fonts(&cc.egui_ctx);
+        ui::install_fonts(&cc.egui_ctx);
         let logo = image::imageops::resize(icon, 144, 144, image::imageops::FilterType::Lanczos3);
         let logo = egui::ColorImage::from_rgba_unmultiplied([logo.width() as usize, logo.height() as usize], logo.as_raw());
+        let mut tools = tools::registry();
+        let selected = args.tool.and_then(|wanted| tools.iter().position(|t| t.name().eq_ignore_ascii_case(&wanted)));
+        if let (Some(i), true) = (selected, args.sample) { tools[i].load_sample(); }
         Self {
-            tools: tools::registry(),
-            selected: None,
+            tools,
+            selected,
             search: String::new(),
             show_sidebar: true,
             logo: cc.egui_ctx.load_texture("logo", logo, Default::default()),
-            screenshot: screenshot.map(|path| Screenshot { path, frames: 0 }),
+            screenshot: args.screenshot.map(|path| Screenshot { path, frames: 0 }),
         }
     }
 
@@ -58,7 +83,7 @@ impl App {
                 if ctx.input(|i| i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::F)) { search.request_focus(); }
                 ui.add_space(8.0);
                 egui::TopBottomPanel::bottom("sidebar_footer").frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 6))).show_inside(ui, |ui| {
-                    ui.vertical_centered(|ui| { ui.label(egui::RichText::new("DevUtils").small().color(theme::SUBTLE)); });
+                    ui.vertical_centered(|ui| { ui.label(egui::RichText::new(concat!("DevUtils ", env!("CARGO_PKG_VERSION"))).small().color(theme::SUBTLE)); });
                 });
                 let query = self.search.to_lowercase();
                 let visible: Vec<usize> = (0..self.tools.len()).filter(|&i| self.tools[i].name().to_lowercase().contains(&query)).collect();
@@ -77,41 +102,39 @@ impl App {
             });
     }
 
-    /// The rounded search box with a painted magnifying glass.
+    /// The rounded search box with a magnifying-glass icon.
     fn search_field(&mut self, ui: &mut egui::Ui) -> egui::Response {
         egui::Frame::new()
             .fill(theme::SEARCH_BG)
             .stroke(egui::Stroke::new(1.0_f32, theme::SEARCH_STROKE))
-            .corner_radius(7).inner_margin(egui::Margin::symmetric(9, 7))
+            .corner_radius(7).inner_margin(egui::Margin::symmetric(9, 6))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    let (icon, _) = ui.allocate_exact_size(egui::vec2(15.0, 17.0), egui::Sense::hover());
-                    let stroke = egui::Stroke::new(1.5_f32, theme::SEARCH_ICON);
-                    let center = icon.center() - egui::vec2(1.5, 1.5);
-                    ui.painter().circle_stroke(center, 4.5, stroke);
-                    ui.painter().line_segment([center + egui::vec2(3.2, 3.2), center + egui::vec2(6.0, 6.0)], stroke);
+                    ui.label(egui::RichText::new(icon::MAGNIFYING_GLASS).size(15.0).color(theme::SEARCH_ICON));
                     ui.add(egui::TextEdit::singleline(&mut self.search).frame(false)
                         .hint_text("Search…  ⌘⇧F").desired_width(ui.available_width()))
                 }).inner
             }).inner
     }
 
-    /// One clickable sidebar entry: highlight, badge and tool name.
+    /// One clickable sidebar entry: icon and tool name, mint-tinted when selected.
     fn tool_row(&self, ui: &mut egui::Ui, i: usize) -> egui::Response {
         let tool = &self.tools[i];
+        let selected = self.selected == Some(i);
         let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::click());
         let painter = ui.painter();
-        if self.selected == Some(i) { painter.rect_filled(rect, 4.0, theme::ROW_SELECTED); }
-        else if response.hovered() { painter.rect_filled(rect, 4.0, theme::ROW_HOVER); }
-        let badge = egui::Rect::from_min_size(rect.min + egui::vec2(2.0, 3.0), egui::vec2(29.0, 20.0));
-        painter.rect_filled(badge, 4.0, theme::BADGE_BG);
-        painter.text(badge.center(), egui::Align2::CENTER_CENTER, tool.badge(), egui::FontId::monospace(10.0), theme::ACCENT);
-        painter.text(rect.left_center() + egui::vec2(38.0, 0.0), egui::Align2::LEFT_CENTER, tool.name(), egui::FontId::proportional(13.0), egui::Color32::LIGHT_GRAY);
-        response
+        if selected { painter.rect_filled(rect, 5.0, theme::ROW_SELECTED); }
+        else if response.hovered() { painter.rect_filled(rect, 5.0, theme::ROW_HOVER); }
+        let (icon_color, text_color) = if selected { (theme::ACCENT, theme::TEXT_STRONG) } else { (theme::ICON, egui::Color32::LIGHT_GRAY) };
+        painter.text(rect.left_center() + egui::vec2(16.0, 0.0), egui::Align2::CENTER_CENTER, tool.icon(), egui::FontId::proportional(16.0), icon_color);
+        painter.text(rect.left_center() + egui::vec2(32.0, 0.0), egui::Align2::LEFT_CENTER, tool.name(), egui::FontId::proportional(13.0), text_color);
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
     }
 
     fn welcome(&self, ui: &mut egui::Ui) {
-        for tip in ["Press ⌘1 to toggle sidebar", "Press ⌘⇧F to search tools"] { ui.label(egui::RichText::new(tip).color(theme::MUTED)); }
+        for tip in ["Press ⌘1 to toggle sidebar", "Press ⌘⇧F to search tools"] {
+            ui.label(egui::RichText::new(format!("{}  {tip}", icon::KEYBOARD)).color(theme::MUTED));
+        }
         ui.add_space((ui.available_height() / 2.0 - 110.0).max(0.0));
         ui.vertical_centered(|ui| {
             ui.add(egui::Image::new(&self.logo).fit_to_exact_size(egui::vec2(72.0, 72.0)));
@@ -131,14 +154,10 @@ impl App {
         ui.painter().rect_filled(pill, 5.0, theme::PILL);
         ui.painter().text(pill.center(), egui::Align2::CENTER_CENTER, title, egui::FontId::proportional(12.0), theme::TEXT);
 
-        // Sidebar icon: a rounded rectangle with a vertical divider.
         let toggle = egui::Rect::from_min_size(egui::pos2(bar_rect.left(), bar_rect.center().y - 13.0), egui::vec2(28.0, 26.0));
         let response = ui.interact(toggle, ui.id().with("toggle_sidebar"), egui::Sense::click()).on_hover_text("Toggle sidebar (⌘1)");
         if response.hovered() { ui.painter().rect_filled(toggle, 5.0, theme::BUTTON_HOVER); }
-        let icon = toggle.shrink2(egui::vec2(7.0, 8.0));
-        let stroke = egui::Stroke::new(1.3_f32, theme::ICON);
-        ui.painter().rect_stroke(icon, 2.0, stroke, egui::StrokeKind::Inside);
-        ui.painter().line_segment([egui::pos2(icon.left() + 5.0, icon.top()), egui::pos2(icon.left() + 5.0, icon.bottom())], stroke);
+        ui.painter().text(toggle.center(), egui::Align2::CENTER_CENTER, icon::SIDEBAR_SIMPLE, egui::FontId::proportional(17.0), theme::ICON);
         if response.clicked() { self.show_sidebar = !self.show_sidebar; }
     }
 
@@ -193,8 +212,8 @@ impl eframe::App for App {
 }
 
 fn main() -> eframe::Result<()> {
-    let screenshot = std::env::args().skip(1).collect::<Vec<_>>().windows(2).find(|w| w[0] == "--screenshot").map(|w| w[1].clone());
-    let checking = screenshot.is_some();
+    let args = Args::parse();
+    let checking = args.screenshot.is_some();
 
     // Decode the icon once: it becomes the window/Dock icon and the welcome-screen logo.
     let icon = image::load_from_memory(ICON_PNG).expect("the bundled application icon must be a valid PNG").into_rgba8();
@@ -215,5 +234,5 @@ fn main() -> eframe::Result<()> {
     if checking { options.event_loop_builder = Some(Box::new(|builder| { use winit::platform::macos::EventLoopBuilderExtMacOS; builder.with_activate_ignoring_other_apps(false); })); }
     #[cfg(target_os = "windows")]
     if checking { options.viewport = options.viewport.with_window_level(egui::WindowLevel::AlwaysOnBottom); }
-    eframe::run_native("DevUtils", options, Box::new(move |cc| Ok(Box::new(App::new(cc, &icon, screenshot)))))
+    eframe::run_native("DevUtils", options, Box::new(move |cc| Ok(Box::new(App::new(cc, &icon, args)))))
 }

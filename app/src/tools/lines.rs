@@ -1,10 +1,12 @@
 //! Line Sort/Dedupe: sort, deduplicate and trim a list, one entry per line.
 use eframe::egui;
 use super::{Category, Tool};
-use crate::ui::{self, theme};
+use crate::ui::{self, icon, theme};
+
+const SAMPLE: &str = "banana\nApple\ncherry\napple\n  banana  \ndate\nCherry";
 
 #[derive(Default)]
-pub struct Lines { input: String, output: String, sort_desc: bool, dedupe: bool, ignore_case: bool, trim_lines: bool }
+pub struct Lines { input: String, output: String, error: String, sort_desc: bool, dedupe: bool, ignore_case: bool, trim_lines: bool }
 
 /// The options that shape the result, independent of the UI.
 #[derive(Clone, Copy, Default)]
@@ -29,7 +31,7 @@ fn process(input: &str, o: Options) -> String {
 
 impl Tool for Lines {
     fn name(&self) -> &'static str { "Line Sort/Dedupe" }
-    fn badge(&self) -> &'static str { "AZ" }
+    fn icon(&self) -> &'static str { icon::SORT_ASCENDING }
     fn category(&self) -> Category { Category::Text }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
@@ -37,11 +39,12 @@ impl Tool for Lines {
         ui.add_space(10.0);
         ui::split(ui, |left, right| {
             let clicked = ui::toolbar(left, "Input:", |ui| {
-                if ui.add(ui::action_button("Clipboard", false)).clicked() { if let Ok(text) = ui::clipboard_text() { self.input = text; } }
-                if ui.add(ui::action_button("Clear", false)).clicked() { self.input.clear(); self.output.clear(); }
-                ui.separator();
+                ui::paste_button(ui, &mut self.input, &mut self.error);
                 let mut clicked = None;
-                for (label, sort, unique) in [("Sort + unique", true, true), ("Sort", true, false), ("Unique entries", false, true)] {
+                if ui::sample_button(ui) { self.load_sample(); }
+                if ui::clear_button(ui) { self.input.clear(); self.output.clear(); self.error.clear(); }
+                ui.separator();
+                for (label, sort, unique) in [("Sort + unique", true, true), ("Sort", true, false), ("Unique", false, true)] {
                     if ui.add(ui::action_button(label, sort && unique)).clicked() { clicked = Some((sort, unique)); }
                 }
                 clicked
@@ -54,16 +57,28 @@ impl Tool for Lines {
                 ui.checkbox(&mut self.sort_desc, "Descending");
             });
             left.add_space(6.0);
-            if let Some((sort, unique)) = clicked {
-                let options = Options { sort, unique: unique || self.dedupe, descending: self.sort_desc, ignore_case: self.ignore_case, trim: self.trim_lines };
-                self.output = process(&self.input, options);
-            }
+            if let Some((sort, unique)) = clicked { self.run(sort, unique); }
+            ui::error_label(left, &self.error);
             ui::fill_editor(left, "input", &mut self.input, "Paste your list here…");
-            ui::toolbar(right, "Output:", |ui| {
-                if ui.add(ui::action_button("Copy", false)).clicked() { ui.ctx().copy_text(self.output.clone()); }
-            });
+            ui::toolbar(right, "Output:", |ui| ui::copy_button(ui, &self.output));
             ui::fill_editor(right, "output", &mut self.output, "");
         });
+    }
+
+    /// The sample has stray spaces and mixed case, so it turns on both clean-ups.
+    fn load_sample(&mut self) {
+        self.input = SAMPLE.into();
+        self.ignore_case = true;
+        self.trim_lines = true;
+        self.run(true, true);
+    }
+}
+
+impl Lines {
+    /// Applies an action button ("Sort", "Unique"…) with the current checkboxes.
+    fn run(&mut self, sort: bool, unique: bool) {
+        let options = Options { sort, unique: unique || self.dedupe, descending: self.sort_desc, ignore_case: self.ignore_case, trim: self.trim_lines };
+        self.output = process(&self.input, options);
     }
 }
 

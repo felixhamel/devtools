@@ -2,6 +2,7 @@
 //! (`random_bytes`, `words`).
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use super::{Category, TextTool, Tool};
+use crate::ui::icon;
 
 /// `N` bytes from the operating system's secure random number generator.
 pub fn random_bytes<const N: usize>() -> Result<[u8; N], String> {
@@ -42,19 +43,20 @@ fn capitalize(word: &str) -> String {
 }
 
 pub fn lorem_ipsum() -> Box<dyn Tool> {
-    Box::new(TextTool::new("Lorem Ipsum Generator", "LO", Category::Text, vec![("Generate", |_| Ok(
+    Box::new(TextTool::new("Lorem Ipsum Generator", icon::PARAGRAPH, Category::Text, vec![("Generate", |_| Ok(
         "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n\nUt enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.".into()
     ))]))
 }
 
 pub fn string_inspector() -> Box<dyn Tool> {
-    Box::new(TextTool::new("String Inspector", "Aa", Category::Text, vec![("Inspect", |s| Ok(
+    Box::new(TextTool::new("String Inspector", icon::MAGNIFYING_GLASS, Category::Text, vec![("Inspect", |s| Ok(
         format!("Characters: {}\nWords: {}\nLines: {}\nBytes: {}", s.chars().count(), s.split_whitespace().count(), s.lines().count(), s.len())
-    ))]))
+    ))]).sample(r#"Hello, wörld! 👋
+Second line"#).key_value_output())
 }
 
 pub fn case_converter() -> Box<dyn Tool> {
-    Box::new(TextTool::new("String Case Converter", "aA", Category::Text, vec![("Convert", convert_case)]))
+    Box::new(TextTool::new("String Case Converter", icon::TEXT_AA, Category::Text, vec![("Convert", convert_case)]).sample(r#"parseHTTPResponse body"#).key_value_output())
 }
 
 fn convert_case(input: &str) -> Result<String, String> {
@@ -74,16 +76,16 @@ fn convert_case(input: &str) -> Result<String, String> {
 }
 
 pub fn color() -> Box<dyn Tool> {
-    Box::new(TextTool::new("Color Converter", "CL", Category::Text, vec![("Inspect", |input| {
+    Box::new(TextTool::new("Color Converter", icon::PALETTE, Category::Text, vec![("Inspect", |input| {
         let h = input.trim().trim_start_matches('#');
         if h.len() != 6 || !h.is_ascii() { return Err("Enter a six-digit hex color, for example #56D28F".into()); }
         let n = u32::from_str_radix(h, 16).map_err(|e| e.to_string())?;
         Ok(format!("HEX: #{n:06X}\nRGB: {}, {}, {}", n >> 16, (n >> 8) & 255, n & 255))
-    })]))
+    })]).sample(r#"#56D28F"#).key_value_output())
 }
 
 pub fn random_string() -> Box<dyn Tool> {
-    Box::new(TextTool::new("Random String Generator", "R?", Category::Text, vec![
+    Box::new(TextTool::new("Random String Generator", icon::DICE_FIVE, Category::Text, vec![
         // 24 random bytes → 32 URL-safe characters.
         ("Generate", |_| Ok(URL_SAFE_NO_PAD.encode(random_bytes::<24>()?))),
     ]))

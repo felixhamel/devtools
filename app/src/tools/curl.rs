@@ -1,13 +1,17 @@
 //! Turns a cURL command into equivalent JavaScript, Python or Rust code.
 use base64::{engine::general_purpose::STANDARD, Engine};
 use super::{Category, TextTool, Tool};
+use crate::ui::icon;
 
 pub fn curl_to_code() -> Box<dyn Tool> {
-    Box::new(TextTool::new("cURL to Code", "cR", Category::Code, vec![
-        ("JavaScript (fetch)", |s| parse_curl(s).map(|r| to_js(&r))),
-        ("Python (requests)", |s| parse_curl(s).map(|r| to_python(&r))),
-        ("Rust (reqwest)", |s| parse_curl(s).map(|r| to_rust(&r))),
-    ]).describe("Paste a curl command (multi-line with \\ is fine). Supports -X, -H, -d/--data*, --json, -u, -A, -b, -e, -G, -I."))
+    Box::new(TextTool::new("cURL to Code", icon::TERMINAL_WINDOW, Category::Code, vec![
+        ("JavaScript", |s| parse_curl(s).map(|r| to_js(&r))),
+        ("Python", |s| parse_curl(s).map(|r| to_python(&r))),
+        ("Rust", |s| parse_curl(s).map(|r| to_rust(&r))),
+    ]).describe("Converts a curl command to JavaScript (fetch), Python (requests) or Rust (reqwest). Supports -X, -H, -d, --json, -u, -A, -b, -e, -G, -I.").sample(r#"curl -X POST https://api.example.com/v1/items \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer TOKEN' \
+  -d '{"name":"Widget","qty":2}'"#).syntax("sh").output_syntax(&["js", "py", "rs"]))
 }
 
 #[derive(Debug, Default, PartialEq)]

@@ -1,6 +1,7 @@
 //! Encoders and decoders: Base64, URL, HTML entities, backslash escapes, hex.
 use base64::{alphabet, engine::{general_purpose::STANDARD, DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig}, Engine};
 use super::{Category, TextTool, Tool};
+use crate::ui::icon;
 
 /// Standard alphabet that accepts input with or without `=` padding.
 const LENIENT: GeneralPurpose = GeneralPurpose::new(&alphabet::STANDARD, GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent));
@@ -14,30 +15,32 @@ pub fn decode_base64(text: &str) -> Result<Vec<u8>, String> {
 }
 
 pub fn base64_string() -> Box<dyn Tool> {
-    Box::new(TextTool::new("Base64 String Encode/Decode", "64", Category::Encoding, vec![
+    Box::new(TextTool::new("Base64 String Encode/Decode", icon::BINARY, Category::Encoding, vec![
         ("Encode", |s| Ok(STANDARD.encode(s.as_bytes()))),
         ("Decode", |s| String::from_utf8(decode_base64(s)?).map_err(|_| "Decoded bytes are not UTF-8 text".to_string())),
-    ]))
+    ]).sample(r#"Hello, DevUtils! 👋"#))
 }
 
 pub fn url() -> Box<dyn Tool> {
-    Box::new(TextTool::new("URL Encode/Decode", "%", Category::Encoding, vec![
+    Box::new(TextTool::new("URL Encode/Decode", icon::PERCENT, Category::Encoding, vec![
         ("Encode", |s| Ok(urlencoding::encode(s).into_owned())),
         ("Decode", |s| urlencoding::decode(s).map(|s| s.into_owned()).map_err(|e| e.to_string())),
-    ]))
+    ]).sample(r#"name=Jean Dupont&city=Montréal & co"#))
 }
 
 pub fn html_entity() -> Box<dyn Tool> {
-    Box::new(TextTool::new("HTML Entity Encode/Decode", "&;", Category::Encoding, vec![
+    Box::new(TextTool::new("HTML Entity Encode/Decode", icon::BRACKETS_ANGLE, Category::Encoding, vec![
         ("Encode", |s| Ok(s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;"))),
         // Every named entity (&eacute;, &nbsp;…) and numeric ones (&#169;, &#x27;).
         ("Decode", |s| Ok(html_escape::decode_html_entities(s).into_owned())),
-    ]))
+    ]).sample(r#"<a href="/menu">Café & "thé"</a>"#).syntax("html"))
 }
 
 pub fn backslash() -> Box<dyn Tool> {
-    Box::new(TextTool::new("Backslash Escape/Unescape", "\\", Category::Encoding, vec![("Escape", escape), ("Unescape", unescape)])
-        .describe("Escape special characters for a string literal, or turn \\n, \\t, \\uXXXX… back into characters."))
+    Box::new(TextTool::new("Backslash Escape/Unescape", icon::QUOTES, Category::Encoding, vec![("Escape", escape), ("Unescape", unescape)])
+        .describe("Escape special characters for a string literal, or turn \\n, \\t, \\uXXXX… back into characters.").sample(r#"Line 1
+	Say "hi"
+C:\Users"#))
 }
 
 fn escape(input: &str) -> Result<String, String> {
@@ -106,19 +109,19 @@ fn unescape(input: &str) -> Result<String, String> {
 }
 
 pub fn hex_to_ascii() -> Box<dyn Tool> {
-    Box::new(TextTool::new("Hex to ASCII", "HX", Category::Encoding, vec![("Convert", |input| {
+    Box::new(TextTool::new("Hex to ASCII", icon::HEXAGON, Category::Encoding, vec![("Convert", |input| {
         let compact: String = input.chars().filter(|c| !c.is_whitespace()).collect();
         let compact = compact.strip_prefix("0x").unwrap_or(&compact);
         if !compact.len().is_multiple_of(2) || !compact.is_ascii() { return Err("Enter pairs of hexadecimal digits".into()); }
         let bytes: Result<Vec<u8>, _> = (0..compact.len()).step_by(2).map(|i| u8::from_str_radix(&compact[i..i + 2], 16)).collect();
         String::from_utf8(bytes.map_err(|e| e.to_string())?).map_err(|_| "The bytes are not valid UTF-8 text".to_string())
-    })]))
+    })]).sample(r#"48 65 6C 6C 6F 2C 20 77 6F 72 6C 64 21"#))
 }
 
 pub fn ascii_to_hex() -> Box<dyn Tool> {
-    Box::new(TextTool::new("ASCII to Hex", "AH", Category::Encoding, vec![
+    Box::new(TextTool::new("ASCII to Hex", icon::TEXT_T, Category::Encoding, vec![
         ("Convert", |s| Ok(s.as_bytes().iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "))),
-    ]))
+    ]).sample(r#"Hello, world!"#))
 }
 
 #[cfg(test)]

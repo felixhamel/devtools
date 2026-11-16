@@ -1,9 +1,10 @@
 //! Number base conversion.
 use super::{Category, TextTool, Tool};
+use crate::ui::icon;
 
 pub fn number_base() -> Box<dyn Tool> {
-    Box::new(TextTool::new("Number Base Converter", "01", Category::Code, vec![("Convert", number_bases)])
-        .describe("Enter an integer: decimal, or prefixed with 0x (hex), 0o (octal) or 0b (binary). Underscores and a leading - are allowed."))
+    Box::new(TextTool::new("Number Base Converter", icon::CALCULATOR, Category::Code, vec![("Convert", number_bases)])
+        .describe("Enter an integer: decimal, or prefixed with 0x (hex), 0o (octal) or 0b (binary). Underscores and a leading - are allowed.").sample(r#"0xFF"#).key_value_output())
 }
 
 /// Parses `[-](0x|0o|0b)?digits` (any case, `_` separators allowed) and prints it in the four bases.

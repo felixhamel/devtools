@@ -15,7 +15,7 @@ Built in Rust with [egui](https://github.com/emilk/egui).
 | **Text & generators** | RegExp Tester (live) · Text Diff · Lorem Ipsum · QR Code Reader/Generator · String Inspector · Case Converter · Color Converter · Random String · Line Sort/Dedupe |
 | **Code & markup** | Number Base Converter · HTML, CSS, SCSS, JS and XML Beautify/Minify · SQL Formatter · Markdown Preview · cURL to Code (fetch, requests, reqwest) |
 
-Most tools show the input on the left and the result on the right, with buttons to paste from the clipboard and copy the result.
+Most tools show the input on the left and the result on the right, with syntax highlighting for code (JSON, SQL, JS, HTML, CSS, XML, Markdown…), a button to paste from the clipboard, a **Sample** button that loads an example, and a Copy button.
 
 ### Keyboard shortcuts
 
@@ -37,7 +37,19 @@ cargo build --release    # optimized binary: app/target/release/devutils
 
 The release profile uses full link-time optimization for a smaller binary, so a release build takes a few minutes.
 
-The interface uses the macOS system fonts (SF Pro, SF Mono), loaded from `/System/Library/Fonts` at startup. They are not bundled; on other systems egui's default fonts are used.
+The interface uses the macOS system fonts (SF Pro, SF Mono), loaded from `/System/Library/Fonts` at startup. They are not bundled; on other systems egui's default fonts are used. Icons come from [Phosphor](https://phosphoricons.com) via `egui-phosphor`.
+
+### Command-line options
+
+| Option | Effect |
+|---|---|
+| `--tool "<name>"` | Open a tool directly, e.g. `--tool "JSON Format/Validate"` |
+| `--sample` | With `--tool`, load the tool's example |
+| `--screenshot <file.png>` | Save a screenshot of the window and quit (handy to check the interface) |
+
+```sh
+cargo run -- --tool "SQL Formatter" --sample --screenshot /tmp/sql.png
+```
 
 ## Project layout
 
@@ -47,7 +59,7 @@ app/
 ├── assets/app-icon.png
 └── src/
     ├── main.rs          window, sidebar, title bar, welcome screen
-    ├── ui.rs            color theme, fonts, shared widgets and the input/output layout
+    ├── ui.rs            color theme, fonts, icons, shared widgets, editors and highlighting
     └── tools/
         ├── mod.rs       Tool trait, TextTool helper, tool registry
         ├── format/      beautify/minify (css.rs and html.rs are hand-written)
@@ -61,9 +73,11 @@ A tool that turns text into text only needs a function and one line in the regis
 ```rust
 // src/tools/text.rs
 pub fn reverse() -> Box<dyn Tool> {
-    Box::new(TextTool::new("Reverse Text", "RV", Category::Text, vec![
+    Box::new(TextTool::new("Reverse Text", icon::ARROW_COUNTER_CLOCKWISE, Category::Text, vec![
         ("Reverse", |s| Ok(s.chars().rev().collect())),
-    ]).describe("Reverses the characters of the input."))
+    ])
+    .describe("Reverses the characters of the input.")
+    .sample("Hello, world!"))
 }
 ```
 
@@ -72,6 +86,16 @@ pub fn reverse() -> Box<dyn Tool> {
 text::reverse(),
 ```
 
-Each action returns `Result<String, String>`: the value goes to the output pane, an error is shown in red. The first action is drawn as the primary button.
+Each action returns `Result<String, String>`: the value goes to the output pane, an error is shown in a red banner. The first action is drawn as the primary button. The icon is any [Phosphor](https://phosphoricons.com) icon from `ui::icon`.
 
-For a tool with its own interface (options, previews, several inputs), implement the `Tool` trait on a struct that holds its state, and draw it with the helpers in `ui.rs` (`split`, `toolbar`, `fill_editor`, `action_button`). `diff.rs` and `lines.rs` are short examples.
+Optional builder methods:
+
+| Method | Effect |
+|---|---|
+| `.describe("…")` | One-line explanation under the title |
+| `.sample("…")` | Adds a Sample button that loads this input and runs the primary action |
+| `.syntax("json")` | Highlights both panes (any syntect language name or extension: `sql`, `js`, `html`, `rs`…) |
+| `.output_syntax(&["js", "py"])` | A different output language per action |
+| `.key_value_output()` | Shows `Key: value` results with muted keys |
+
+For a tool with its own interface (options, previews, several inputs), implement the `Tool` trait on a struct that holds its state, and draw it with the helpers in `ui.rs` (`split`, `toolbar`, `code_editor`, `action_button`, `copy_button`…). `diff.rs` and `lines.rs` are short examples.

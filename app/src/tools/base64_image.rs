@@ -2,7 +2,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use eframe::egui;
 use super::{encoding::decode_base64, Category, Tool};
-use crate::ui;
+use crate::ui::{self, icon};
 
 #[derive(Default)]
 pub struct Base64Image { text: String, path: String, info: String, error: String, texture: Option<egui::TextureHandle> }
@@ -31,7 +31,7 @@ impl Base64Image {
 
 impl Tool for Base64Image {
     fn name(&self) -> &'static str { "Base64 Image Encode/Decode" }
-    fn badge(&self) -> &'static str { "IM" }
+    fn icon(&self) -> &'static str { icon::IMAGE }
     fn category(&self) -> Category { Category::Encoding }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
@@ -45,18 +45,16 @@ impl Tool for Base64Image {
         ui.add_space(10.0);
         ui::split(ui, |left, right| {
             ui::toolbar(left, "Input:", |ui| {
-                if ui.add(ui::action_button("Clipboard", false)).clicked() {
-                    match ui::clipboard_text() { Ok(text) => self.text = text, Err(e) => self.error = e }
-                }
-                if ui.add(ui::action_button("Clear", false)).clicked() { *self = Self::default(); }
-                if ui.add(ui::action_button("Copy", false)).clicked() { ctx.copy_text(self.text.clone()); }
+                ui::paste_button(ui, &mut self.text, &mut self.error);
+                if ui::clear_button(ui) { *self = Self::default(); }
+                ui::copy_button(ui, &self.text);
                 ui.separator();
                 if ui.add(ui::action_button("Decode", true)).clicked() {
                     match decode(&self.text) { Ok(bytes) => self.show(&ctx, &bytes), Err(e) => { self.info.clear(); self.error = e; self.texture = None; } }
                 }
             });
             left.horizontal(|ui| {
-                let encode = ui.add(ui::action_button("Encode file", false)).clicked();
+                let encode = ui.add(ui::icon_button(icon::FOLDER_OPEN, "Encode file", false)).clicked();
                 let field = ui::editor_frame().inner_margin(5).show(ui, |ui| {
                     ui.add(egui::TextEdit::singleline(&mut self.path).frame(false).font(egui::TextStyle::Monospace)
                         .desired_width(f32::INFINITY).hint_text("/path/to/image.png"))
@@ -70,8 +68,7 @@ impl Tool for Base64Image {
             ui::fill_editor(left, "base64", &mut self.text, "data:image/png;base64,iVBORw0KGgo…");
             ui::toolbar(right, "Preview:", |ui| { ui.label(egui::RichText::new(&self.info).color(ui::MUTED)); });
             ui::error_label(right, &self.error);
-            ui::editor_frame().show(right, |ui| {
-                ui.set_min_size(ui.available_size());
+            ui::preview_frame(right, |ui| {
                 if let Some(texture) = &self.texture {
                     ui.add(egui::Image::new(texture).max_width(ui.available_width()).max_height(ui.available_height()));
                 }

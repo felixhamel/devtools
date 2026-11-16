@@ -1,7 +1,7 @@
 //! QR Code Reader/Generator.
 use eframe::egui;
 use super::{Category, Tool};
-use crate::ui;
+use crate::ui::{self, icon};
 
 /// Pixels per QR module in the generated image, and the quiet zone width in modules.
 const SCALE: usize = 8;
@@ -29,7 +29,7 @@ impl Qr {
 
 impl Tool for Qr {
     fn name(&self) -> &'static str { "QR Code Reader/Generator" }
-    fn badge(&self) -> &'static str { "QR" }
+    fn icon(&self) -> &'static str { icon::QR_CODE }
     fn category(&self) -> Category { Category::Text }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
@@ -58,20 +58,19 @@ impl Tool for Qr {
         ui.add_space(10.0);
         ui::split(ui, |left, right| {
             ui::toolbar(left, "Content:", |ui| {
-                if ui.add(ui::action_button("Clipboard", false)).clicked() {
-                    match ui::clipboard_text() { Ok(text) => self.text = text, Err(e) => self.error = e }
-                }
-                if ui.add(ui::action_button("Read image from clipboard", true)).clicked() {
+                ui::paste_button(ui, &mut self.text, &mut self.error);
+                if ui::sample_button(ui) { self.load_sample(); }
+                if ui.add(ui::icon_button(icon::IMAGE, "Read image", true)).on_hover_text("Decode a QR code from a copied image or screenshot").clicked() {
                     match arboard::Clipboard::new().and_then(|mut c| c.get_image()) {
                         Ok(img) => self.read(&Rgba { width: img.width, height: img.height, pixels: img.bytes.into_owned() }),
                         Err(e) => self.error = format!("No image in the clipboard ({e})"),
                     }
                 }
-                if ui.add(ui::action_button("Clear", false)).clicked() { *self = Self::default(); }
+                if ui::clear_button(ui) { *self = Self::default(); }
             });
             ui::fill_editor(left, "content", &mut self.text, "https://example.com");
             ui::toolbar(right, "QR code:", |ui| {
-                if ui.add_enabled(self.image.is_some(), ui::action_button("Copy image", false)).clicked() {
+                if ui.add_enabled(self.image.is_some(), ui::icon_button(icon::COPY, "Copy image", false)).clicked() {
                     if let Some(img) = &self.image {
                         let data = arboard::ImageData { width: img.width, height: img.height, bytes: std::borrow::Cow::Borrowed(&img.pixels) };
                         if let Err(e) = arboard::Clipboard::new().and_then(|mut c| c.set_image(data)) { self.error = format!("Clipboard: {e}"); }
@@ -79,16 +78,16 @@ impl Tool for Qr {
                 }
             });
             ui::error_label(right, &self.error);
-            ui::editor_frame().show(right, |ui| {
-                let size = ui.available_size();
-                ui.set_min_size(size);
+            ui::preview_frame(right, |ui| {
                 if let Some(texture) = &self.texture {
-                    let side = size.x.min(size.y).min(420.0);
+                    let side = ui.available_width().min(ui.available_height()).min(420.0);
                     ui.vertical_centered(|ui| { ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(side, side))); });
                 }
             });
         });
     }
+
+    fn load_sample(&mut self) { self.text = "https://example.com/hello?from=devutils".into(); }
 }
 
 /// Renders `text` as a black-on-white QR code with a quiet zone, `SCALE` px per module.

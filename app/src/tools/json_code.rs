@@ -6,13 +6,14 @@
 //! only ever emitted inside escaped string literals.
 use serde_json::Value;
 use super::{text::words, Category, TextTool, Tool};
+use crate::ui::icon;
 
 pub fn json_to_code() -> Box<dyn Tool> {
-    Box::new(TextTool::new("JSON to Code", "{C}", Category::Data, vec![
+    Box::new(TextTool::new("JSON to Code", icon::CODE, Category::Data, vec![
         ("TypeScript", |s| generate(s, Lang::TypeScript)),
-        ("Rust (serde)", |s| generate(s, Lang::Rust)),
+        ("Rust", |s| generate(s, Lang::Rust)),
         ("Go", |s| generate(s, Lang::Go)),
-    ]).describe("Paste a JSON sample. Arrays of objects are merged: keys missing from some items become optional."))
+    ]).describe("Generates TypeScript interfaces, Rust serde structs or Go structs from a JSON sample. Keys missing from some array items become optional.").sample(r#"{"id":1,"name":"Ada","email":"ada@example.com","roles":["admin"],"address":{"city":"Montréal","zip":null}}"#).syntax("json").output_syntax(&["js", "rs", "go"]))
 }
 
 #[derive(Clone, Copy, PartialEq)]

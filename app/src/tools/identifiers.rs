@@ -1,24 +1,27 @@
 //! UUID v4 / ULID generation and decoding.
 use eframe::egui;
 use super::{text::random_bytes, Category, Tool};
-use crate::ui::{self, TextIo};
+use crate::ui::{self, icon, TextIo};
 
 /// ULID alphabet (Crockford's Base32: no I, L, O, U).
 const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
-#[derive(Default)]
 pub struct Identifiers { io: TextIo }
+
+impl Default for Identifiers {
+    fn default() -> Self { Self { io: TextIo { output_syntax: Some(ui::KEY_VALUE), ..TextIo::default() } } }
+}
 
 impl Tool for Identifiers {
     fn name(&self) -> &'static str { "UUID/ULID Generate/Decode" }
-    fn badge(&self) -> &'static str { "ID" }
+    fn icon(&self) -> &'static str { icon::IDENTIFICATION_CARD }
     fn category(&self) -> Category { Category::Security }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
         ui::description(ui, "Generate a UUID v4 or a ULID, or paste one and decode it.");
         ui.add_space(10.0);
         ui::split(ui, |left, right| {
-            match self.io.input_pane(left, &["Generate UUID", "Generate ULID", "Decode"], "Paste a UUID or ULID…") {
+            match self.io.input_pane(left, &["Generate UUID", "Generate ULID", "Decode"], "Paste a UUID or ULID…", None) {
                 Some(i @ (0 | 1)) => {
                     let result = identifier(i == 1);
                     if let Ok(value) = &result { self.io.input = value.clone(); }
@@ -29,6 +32,14 @@ impl Tool for Identifiers {
             }
             self.io.output_pane(right);
         });
+    }
+
+    /// Generates a UUID and shows what it decodes to.
+    fn load_sample(&mut self) {
+        match identifier(false) {
+            Ok(uuid) => { self.io.apply(decode_identifier(&uuid)); self.io.input = uuid; }
+            Err(e) => self.io.apply(Err(e)),
+        }
     }
 }
 
