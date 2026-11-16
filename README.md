@@ -1,8 +1,15 @@
-# DevUtils
+<p align="center">
+  <img src="app/assets/app-icon.png" width="128" height="128" alt="DevUtils icon">
+</p>
+
+<h1 align="center">DevUtils</h1>
+
+<p align="center">
+  Everyday developer tools in one fast, native macOS window.<br>
+  Built in Rust with <a href="https://github.com/emilk/egui">egui</a>.
+</p>
 
 A native macOS app that gathers the small tools developers reach for every day — formatting JSON, decoding a JWT, testing a regex, converting a cURL command — in one fast window. Everything runs locally: nothing you paste ever leaves your machine.
-
-Built in Rust with [egui](https://github.com/emilk/egui).
 
 ## Tools
 
