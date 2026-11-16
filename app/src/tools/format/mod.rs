@@ -15,13 +15,12 @@ pub fn html() -> Box<dyn Tool> {
 }
 
 pub fn css() -> Box<dyn Tool> {
-    Box::new(TextTool::new("CSS Beautify/Minify", icon::FILE_CSS, Category::Code, vec![("Beautify", |s| css::beautify(s, false)), ("Minify", |s| css::minify(s, false))]).sample(r#"body{margin:0;font-family:system-ui}/* layout */.nav,.footer{display:flex;gap:8px}@media (max-width:600px){.nav{display:none}}"#).syntax("css"))
-}
-
-pub fn scss() -> Box<dyn Tool> {
-    Box::new(TextTool::new("SCSS Beautify/Minify", icon::PAINT_BRUSH, Category::Code, vec![("Beautify", |s| css::beautify(s, true)), ("Minify", |s| css::minify(s, true))]).sample(r#"$accent:#56d28f;
+    Box::new(TextTool::new("CSS/SCSS Beautify/Minify", icon::FILE_CSS, Category::Code, vec![("Beautify", css::beautify), ("Minify", css::minify)])
+        .describe("Formats CSS and SCSS (nesting, // comments and #{…} interpolation are understood).")
+        .sample(r#"$accent:#56d28f;
 // card component
-.card{padding:8px;&:hover{color:$accent}.title{font-weight:bold;margin:#{$gap} 0}}"#).syntax("css"))
+.card{padding:8px;&:hover{color:$accent}.title{font-weight:bold;margin:#{$gap} 0}}
+@media (max-width:600px){.nav{display:none}}"#).syntax("css"))
 }
 
 pub fn js() -> Box<dyn Tool> {

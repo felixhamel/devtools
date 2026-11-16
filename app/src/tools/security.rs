@@ -1,27 +1,6 @@
-//! Security tools: JWT decoding and hashes.
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+//! Hash Generator.
 use super::{Category, TextTool, Tool};
 use crate::ui::icon;
-
-/// The public example token from jwt.io ("John Doe", signed with the demo secret
-/// "your-256-bit-secret"). Not a credential, hence the secret-scanner exception.
-const SAMPLE_JWT: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"; // gitleaks:allow
-
-pub fn jwt() -> Box<dyn Tool> {
-    Box::new(TextTool::new("JWT Debugger", icon::KEY, Category::Security, vec![("Inspect", jwt_decode)]).sample(SAMPLE_JWT))
-}
-
-/// Decodes a JWT's header and payload (Base64URL JSON). The signature is not checked.
-fn jwt_decode(input: &str) -> Result<String, String> {
-    let parts: Vec<_> = input.trim().split('.').collect();
-    if parts.len() < 2 { return Err("Expected a JWT with header and payload".into()); }
-    let decode = |s: &str| -> Result<String, String> {
-        let bytes = URL_SAFE_NO_PAD.decode(s).map_err(|e| e.to_string())?;
-        let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-        serde_json::to_string_pretty(&value).map_err(|e| e.to_string())
-    };
-    Ok(format!("Header:\n{}\n\nPayload:\n{}\n\nSignature is not verified.", decode(parts[0])?, decode(parts[1])?))
-}
 
 pub fn hash() -> Box<dyn Tool> {
     Box::new(TextTool::new("Hash Generator", icon::HASH, Category::Security, vec![("Generate", hashes)])

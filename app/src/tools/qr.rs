@@ -88,6 +88,10 @@ impl Tool for Qr {
     }
 
     fn load_sample(&mut self) { self.text = "https://example.com/hello?from=devutils".into(); }
+
+    fn accepts_input(&self) -> bool { true }
+
+    fn set_input(&mut self, text: &str) { self.text = text.to_owned(); }
 }
 
 /// Renders `text` as a black-on-white QR code with a quiet zone, `SCALE` px per module.

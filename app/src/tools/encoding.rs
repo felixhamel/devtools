@@ -1,5 +1,5 @@
 //! Encoders and decoders: Base64, URL, HTML entities, backslash escapes, hex.
-use base64::{alphabet, engine::{general_purpose::STANDARD, DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig}, Engine};
+use base64::{alphabet, engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig}, Engine};
 use super::{Category, TextTool, Tool};
 use crate::ui::icon;
 
@@ -14,18 +14,27 @@ pub fn decode_base64(text: &str) -> Result<Vec<u8>, String> {
     LENIENT.decode(normalized).map_err(|e| format!("Invalid Base64: {e}"))
 }
 
-pub fn base64_string() -> Box<dyn Tool> {
-    Box::new(TextTool::new("Base64 String Encode/Decode", icon::BINARY, Category::Encoding, vec![
-        ("Encode", |s| Ok(STANDARD.encode(s.as_bytes()))),
-        ("Decode", |s| String::from_utf8(decode_base64(s)?).map_err(|_| "Decoded bytes are not UTF-8 text".to_string())),
-    ]).sample(r#"Hello, DevUtils! 👋"#))
-}
-
 pub fn url() -> Box<dyn Tool> {
     Box::new(TextTool::new("URL Encode/Decode", icon::PERCENT, Category::Encoding, vec![
-        ("Encode", |s| Ok(urlencoding::encode(s).into_owned())),
-        ("Decode", |s| urlencoding::decode(s).map(|s| s.into_owned()).map_err(|e| e.to_string())),
-    ]).sample(r#"name=Jean Dupont&city=Montréal & co"#))
+        ("Component", |s| Ok(percent_encoding::utf8_percent_encode(s, COMPONENT).to_string())),
+        ("Full URL", |s| Ok(percent_encoding::utf8_percent_encode(s, FULL_URL).to_string())),
+        ("Decode", url_decode),
+    ])
+    .describe("Component escapes everything but letters, digits and - _ . ~ (encodeURIComponent). Full URL keeps : / ? # & = intact (encodeURI).")
+    .sample(r#"https://example.com/search?q=café & crème&lang=fr#résultats"#))
+}
+
+/// Percent-encodes all but RFC 3986 unreserved characters, like `encodeURIComponent`.
+pub(super) const COMPONENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC.remove(b'-').remove(b'_').remove(b'.').remove(b'~');
+
+/// Also keeps the characters that give a URL its structure, like `encodeURI`.
+const FULL_URL: &percent_encoding::AsciiSet = &COMPONENT
+    .remove(b';').remove(b',').remove(b'/').remove(b'?').remove(b':').remove(b'@').remove(b'&').remove(b'=').remove(b'+')
+    .remove(b'$').remove(b'!').remove(b'*').remove(b'\'').remove(b'(').remove(b')').remove(b'#');
+
+fn url_decode(input: &str) -> Result<String, String> {
+    percent_encoding::percent_decode_str(input).decode_utf8().map(|s| s.into_owned())
+        .map_err(|_| "The decoded bytes are not valid UTF-8 text".to_string())
 }
 
 pub fn html_entity() -> Box<dyn Tool> {
@@ -108,25 +117,52 @@ fn unescape(input: &str) -> Result<String, String> {
     Ok(out)
 }
 
-pub fn hex_to_ascii() -> Box<dyn Tool> {
-    Box::new(TextTool::new("Hex to ASCII", icon::HEXAGON, Category::Encoding, vec![("Convert", |input| {
-        let compact: String = input.chars().filter(|c| !c.is_whitespace()).collect();
-        let compact = compact.strip_prefix("0x").unwrap_or(&compact);
-        if !compact.len().is_multiple_of(2) || !compact.is_ascii() { return Err("Enter pairs of hexadecimal digits".into()); }
-        let bytes: Result<Vec<u8>, _> = (0..compact.len()).step_by(2).map(|i| u8::from_str_radix(&compact[i..i + 2], 16)).collect();
-        String::from_utf8(bytes.map_err(|e| e.to_string())?).map_err(|_| "The bytes are not valid UTF-8 text".to_string())
-    })]).sample(r#"48 65 6C 6C 6F 2C 20 77 6F 72 6C 64 21"#))
+pub fn hex() -> Box<dyn Tool> {
+    Box::new(TextTool::new("Hex \u{2194} ASCII", icon::HEXAGON, Category::Encoding, vec![("Text \u{2192} Hex", text_to_hex), ("Hex \u{2192} Text", hex_to_text)])
+        .describe("Converts text to hexadecimal bytes and back. Hex input may use spaces, colons, 0x or \\x prefixes.")
+        .sample(r#"Hello, world!"#))
 }
 
-pub fn ascii_to_hex() -> Box<dyn Tool> {
-    Box::new(TextTool::new("ASCII to Hex", icon::TEXT_T, Category::Encoding, vec![
-        ("Convert", |s| Ok(s.as_bytes().iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "))),
-    ]).sample(r#"Hello, world!"#))
+fn text_to_hex(input: &str) -> Result<String, String> {
+    Ok(input.as_bytes().iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "))
+}
+
+/// Accepts `48656C6C6F`, `48 65 6c`, `48:65`, `0x48 0x65` or `\x48\x65`.
+fn hex_to_text(input: &str) -> Result<String, String> {
+    let lower = input.to_ascii_lowercase().replace("0x", "").replace("\\x", "");
+    let digits: String = lower.chars().filter(|c| !c.is_whitespace() && !matches!(c, ':' | ',' | '-')).collect();
+    if !digits.len().is_multiple_of(2) || !digits.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("Enter pairs of hexadecimal digits".into());
+    }
+    let bytes: Vec<u8> = (0..digits.len()).step_by(2).map(|i| u8::from_str_radix(&digits[i..i + 2], 16).expect("checked hex digits")).collect();
+    String::from_utf8(bytes).map_err(|_| "The bytes are not valid UTF-8 text".to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn url_encoding_modes() {
+        let component = |s| percent_encoding::utf8_percent_encode(s, COMPONENT).to_string();
+        let full = |s| percent_encoding::utf8_percent_encode(s, FULL_URL).to_string();
+        assert_eq!(component("a b&c/é~"), "a%20b%26c%2F%C3%A9~");
+        assert_eq!(full("https://x.com/a b?q=é&r=1#top"), "https://x.com/a%20b?q=%C3%A9&r=1#top");
+        assert_eq!(url_decode("a%20b%26c%2F%C3%A9").unwrap(), "a b&c/é");
+        assert!(url_decode("%FF").is_err());
+    }
+
+    #[test]
+    fn hex_round_trip_and_formats() {
+        assert_eq!(text_to_hex("Hé!").unwrap(), "48 C3 A9 21");
+        assert_eq!(hex_to_text("48 C3 A9 21").unwrap(), "Hé!");
+        assert_eq!(hex_to_text("0x48 0x69").unwrap(), "Hi");
+        assert_eq!(hex_to_text(r"\x48\x69").unwrap(), "Hi");
+        assert_eq!(hex_to_text("48:69").unwrap(), "Hi");
+        assert!(hex_to_text("4").is_err());
+        assert!(hex_to_text("zz").is_err());
+        assert!(hex_to_text("ff").is_err()); // not UTF-8
+    }
 
     #[test]
     fn base64_is_lenient() {

@@ -9,20 +9,20 @@
   Built in Rust with <a href="https://github.com/emilk/egui">egui</a>.
 </p>
 
-A native macOS app that gathers the small tools developers reach for every day — formatting JSON, decoding a JWT, testing a regex, converting a cURL command — in one fast window. Everything runs locally: nothing you paste ever leaves your machine.
+A native macOS app that gathers the small tools developers reach for every day — formatting JSON, decoding a JWT, testing a regex, converting a timestamp — in one fast window. Everything runs locally: nothing you paste ever leaves your machine.
 
 ## Tools
 
 | Category | Tools |
 |---|---|
-| **Date & scheduling** | Unix Time Converter · Cron Job Parser (description + next runs) |
-| **Data conversion** | JSON Format/Validate · URL Parser · JSON to Code (TypeScript, Rust/serde, Go) |
-| **Encoding** | Base64 String · Base64 Image (drag & drop, data URIs) · URL Encode/Decode · HTML Entities · Backslash Escape/Unescape · Hex ↔ ASCII |
-| **Security & identifiers** | JWT Debugger · UUID v4 / ULID Generate & Decode · Hash Generator (MD5, SHA-1, SHA-256, SHA-512) · X.509 Certificate Decoder |
-| **Text & generators** | RegExp Tester (live) · Text Diff · Lorem Ipsum · QR Code Reader/Generator · String Inspector · Case Converter · Color Converter · Random String · Line Sort/Dedupe |
-| **Code & markup** | Number Base Converter · HTML, CSS, SCSS, JS and XML Beautify/Minify · SQL Formatter · Markdown Preview · cURL to Code (fetch, requests, reqwest) |
+| **Date & scheduling** | Unix Time Converter (calendar, time zones, relative time) · Cron Job Parser (description + next runs) |
+| **Data conversion** | JSON Format/Validate (indent, sorted keys, tree view) · URL Parser (editable components and parameters) |
+| **Encoding** | Base64 (text or files, URL-safe, hex dump of binary) · Base64 Image (drag & drop, data URIs) · URL Encode/Decode (component or full URL) · HTML Entities · Backslash Escape/Unescape · Hex ↔ ASCII |
+| **Security & identifiers** | JWT Debugger (expiry status, HS256/384/512 verification) · UUID v4 / v7 and ULID (bulk, timestamps) · Hash Generator (MD5, SHA-1, SHA-256, SHA-512) · Password Generator (passwords and passphrases) · X.509 Certificate Decoder |
+| **Text & generators** | RegExp Tester (highlighted matches, replace, common patterns) · Text Diff · QR Code Reader/Generator · String Inspector (hidden characters, line endings, Unicode names) · Case Converter (camel, snake, kebab, slug…) · Color Converter (picker, CSS formats, WCAG contrast) · Line Sort/Dedupe |
+| **Code & markup** | Number Base Converter · HTML, CSS/SCSS, JS and XML Beautify/Minify · SQL Formatter |
 
-Most tools show the input on the left and the result on the right, with syntax highlighting for code (JSON, SQL, JS, HTML, CSS, XML, Markdown…), a button to paste from the clipboard, a **Sample** button that loads an example, and a Copy button.
+Most tools show the input on the left and the result on the right, and update **as you type**. Code is syntax-highlighted (JSON, SQL, JS, HTML, CSS, XML…), and every tool has buttons to paste from the clipboard, load a **Sample** and copy the result. The **⇄ Reuse** menu sends a result back as input, or to another tool — e.g. decode Base64, then send the JSON to the formatter.
 
 ### Keyboard shortcuts
 
@@ -111,7 +111,6 @@ Optional builder methods:
 | `.describe("…")` | One-line explanation under the title |
 | `.sample("…")` | Adds a Sample button that loads this input and runs the primary action |
 | `.syntax("json")` | Highlights both panes (any syntect language name or extension: `sql`, `js`, `html`, `rs`…) |
-| `.output_syntax(&["js", "py"])` | A different output language per action |
 | `.key_value_output()` | Shows `Key: value` results with muted keys |
 
 For a tool with its own interface (options, previews, several inputs), implement the `Tool` trait on a struct that holds its state, and draw it with the helpers in `ui.rs` (`split`, `toolbar`, `code_editor`, `action_button`, `copy_button`…). `diff.rs` and `lines.rs` are short examples.

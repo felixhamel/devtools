@@ -40,6 +40,7 @@ pub mod theme {
     pub const MATCH_BG: Color32 = Color32::from_rgb(40, 92, 66);
     pub const DIFF_ADDED: Color32 = Color32::from_rgb(130, 220, 169);
     pub const DIFF_REMOVED: Color32 = Color32::from_rgb(255, 135, 125);
+    pub const WARNING: Color32 = Color32::from_rgb(240, 185, 95);
 }
 
 pub use theme::MUTED;
@@ -51,11 +52,44 @@ pub const KEY_VALUE: &str = "key-value";
 /// make typing sluggish on very large inputs.
 const MAX_HIGHLIGHT_BYTES: usize = 200_000;
 
+/// Inputs up to this size are processed on every keystroke; larger ones wait
+/// for a short pause in typing.
+const LIVE_IMMEDIATE_BYTES: usize = 50_000;
+
+/// Delays live processing of large inputs until typing pauses.
+#[derive(Default)]
+pub struct Debounce { pending: bool, since: f64 }
+
+impl Debounce {
+    /// Records that the input changed.
+    pub fn touch(&mut self, ctx: &egui::Context) {
+        self.pending = true;
+        self.since = ctx.input(|i| i.time);
+    }
+
+    /// True once after a change: immediately for small inputs, after a pause
+    /// for large ones (a repaint is scheduled so the deadline is not missed).
+    pub fn due(&mut self, ctx: &egui::Context, input_len: usize) -> bool {
+        if !self.pending { return false; }
+        let delay = if input_len > LIVE_IMMEDIATE_BYTES { 0.35 } else { 0.0 };
+        let wait = self.since + delay - ctx.input(|i| i.time);
+        if wait > 0.0 {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
+            return false;
+        }
+        self.pending = false;
+        true
+    }
+}
+
 /// Dark visuals with the app's window background.
 pub fn apply_visuals(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
     visuals.panel_fill = theme::WINDOW_BG;
     visuals.window_fill = theme::WINDOW_BG;
+    // Mint accent for selected tabs, checked boxes and selected text.
+    visuals.selection.bg_fill = theme::ACCENT_DARK;
+    visuals.selection.stroke.color = theme::TEXT_STRONG;
     ctx.set_visuals(visuals);
 }
 
@@ -77,6 +111,8 @@ pub fn install_fonts(ctx: &egui::Context) {
     add("symbols", SYMBOLS, egui::FontFamily::Proportional, false);
     add("symbols", SYMBOLS, egui::FontFamily::Monospace, false);
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+    // Icons can also appear next to monospace text.
+    fonts.families.entry(egui::FontFamily::Monospace).or_default().push("phosphor".into());
     ctx.set_fonts(fonts);
 }
 
@@ -127,12 +163,26 @@ pub fn paste_button(ui: &mut egui::Ui, target: &mut String, error: &mut String) 
 
 /// "Copy" button that turns into "Copied" for a moment after a click.
 pub fn copy_button(ui: &mut egui::Ui, text: &str) {
+    copy_with_feedback(ui, text, ui.id().with("copy-feedback"), false);
+}
+
+/// Icon-only copy button (a check mark appears after a click). `id` must be
+/// unique among the buttons shown together, e.g. the row index in a grid.
+pub fn copy_icon(ui: &mut egui::Ui, text: &str, id: impl std::hash::Hash) {
+    copy_with_feedback(ui, text, egui::Id::new(("copy-icon", id)), true);
+}
+
+fn copy_with_feedback(ui: &mut egui::Ui, text: &str, id: egui::Id, compact: bool) {
     const FEEDBACK: f64 = 1.5;
-    let id = ui.id().with("copy-feedback");
     let now = ui.input(|i| i.time);
     // Seconds of "Copied" feedback left, if the button was clicked recently.
     let remaining = ui.data(|d| d.get_temp::<f64>(id)).map(|at| FEEDBACK - (now - at)).filter(|left| *left > 0.0);
-    let button = if remaining.is_some() { icon_button(icon::CHECK, "Copied", false) } else { icon_button(icon::COPY, "Copy", false) };
+    let (glyph, label) = if remaining.is_some() { (icon::CHECK, "Copied") } else { (icon::COPY, "Copy") };
+    let button = if compact {
+        egui::Button::new(egui::RichText::new(glyph).size(13.0).color(if remaining.is_some() { theme::ACCENT } else { theme::TEXT })).fill(theme::BUTTON).corner_radius(5)
+    } else {
+        icon_button(glyph, label, false)
+    };
     if ui.add(button).on_hover_text("Copy to the clipboard").clicked() {
         ui.ctx().copy_text(text.to_owned());
         ui.data_mut(|d| d.insert_temp(id, now));
@@ -174,6 +224,8 @@ pub enum Highlight<'a> {
     Diff,
     /// "Key: value" lines: keys muted, values bright.
     KeyValue,
+    /// Byte ranges drawn in the given text colors (e.g. the three parts of a JWT).
+    Spans(&'a [(std::ops::Range<usize>, egui::Color32)]),
 }
 
 impl<'a> Highlight<'a> {
@@ -204,13 +256,10 @@ pub fn code_editor(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str, h
             let editor = egui::TextEdit::multiline(text).frame(false).font(egui::TextStyle::Monospace)
                 .min_size(size).desired_width(f32::INFINITY).hint_text(hint);
             match highlight {
-                Highlight::Plain => ui.add(editor),
+                Highlight::Plain => ui.add(editor.text_color(theme::TEXT)),
                 Highlight::Syntax(language) => {
-                    let theme = egui_extras::syntax_highlighting::CodeTheme::from_style(ui.style());
                     let mut layouter = |ui: &egui::Ui, string: &str, wrap_width: f32| {
-                        let mut job = egui_extras::syntax_highlighting::highlight(ui.ctx(), ui.style(), &theme, string, language);
-                        // egui_extras 0.31 underlines everything italic; keep the italics only.
-                        for section in &mut job.sections { section.format.underline = egui::Stroke::NONE; }
+                        let mut job = syntax_job(ui, string, language);
                         job.wrap.max_width = wrap_width;
                         ui.fonts(|fonts| fonts.layout_job(job))
                     };
@@ -219,6 +268,14 @@ pub fn code_editor(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str, h
                 Highlight::Ranges(ranges) => {
                     let mut layouter = |ui: &egui::Ui, string: &str, wrap_width: f32| {
                         let mut job = ranges_job(ui, string, ranges);
+                        job.wrap.max_width = wrap_width;
+                        ui.fonts(|fonts| fonts.layout_job(job))
+                    };
+                    ui.add(editor.layouter(&mut layouter))
+                }
+                Highlight::Spans(spans) => {
+                    let mut layouter = |ui: &egui::Ui, string: &str, wrap_width: f32| {
+                        let mut job = spans_job(ui, string, spans);
                         job.wrap.max_width = wrap_width;
                         ui.fonts(|fonts| fonts.layout_job(job))
                     };
@@ -247,6 +304,27 @@ pub fn code_editor(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str, h
     response
 }
 
+/// Syntax-highlighted layout of `text` (results are cached by egui_extras).
+fn syntax_job(ui: &egui::Ui, text: &str, language: &str) -> egui::text::LayoutJob {
+    let theme = egui_extras::syntax_highlighting::CodeTheme::from_style(ui.style());
+    let mut job = egui_extras::syntax_highlighting::highlight(ui.ctx(), ui.style(), &theme, text, language);
+    // egui_extras 0.31 underlines everything italic; keep the italics only.
+    for section in &mut job.sections { section.format.underline = egui::Stroke::NONE; }
+    job
+}
+
+/// Read-only, selectable, highlighted code sized to its content (indentation is kept).
+pub fn code_view(ui: &mut egui::Ui, code: &str, language: &str) {
+    let mut layouter = |ui: &egui::Ui, string: &str, wrap_width: f32| {
+        let mut job = syntax_job(ui, string, language);
+        job.wrap.max_width = wrap_width;
+        ui.fonts(|fonts| fonts.layout_job(job))
+    };
+    let mut text = code;
+    ui.add(egui::TextEdit::multiline(&mut text).frame(false).font(egui::TextStyle::Monospace)
+        .desired_rows(1).desired_width(f32::INFINITY).layouter(&mut layouter));
+}
+
 /// Lays out `text` with `ranges` on a highlighted background. Ranges that do not
 /// fit the text (it may have changed since they were computed) are skipped.
 fn ranges_job(ui: &egui::Ui, text: &str, ranges: &[std::ops::Range<usize>]) -> egui::text::LayoutJob {
@@ -263,6 +341,23 @@ fn ranges_job(ui: &egui::Ui, text: &str, ranges: &[std::ops::Range<usize>]) -> e
         pos = range.end;
     }
     job.append(&text[pos..], 0.0, normal);
+    job
+}
+
+/// Lays out `text` with each span in its color; text outside spans is muted.
+/// Spans that do not fit the text are skipped, as in [`ranges_job`].
+fn spans_job(ui: &egui::Ui, text: &str, spans: &[(std::ops::Range<usize>, egui::Color32)]) -> egui::text::LayoutJob {
+    let font = egui::TextStyle::Monospace.resolve(ui.style());
+    let mut job = egui::text::LayoutJob::default();
+    let mut pos = 0;
+    for (range, color) in spans {
+        let fits = range.start >= pos && range.end <= text.len() && text.is_char_boundary(range.start) && text.is_char_boundary(range.end);
+        if !fits { continue; }
+        job.append(&text[pos..range.start], 0.0, egui::TextFormat::simple(font.clone(), MUTED));
+        job.append(&text[range.clone()], 0.0, egui::TextFormat::simple(font.clone(), *color));
+        pos = range.end;
+    }
+    job.append(&text[pos..], 0.0, egui::TextFormat::simple(font, MUTED));
     job
 }
 
@@ -311,6 +406,13 @@ pub fn preview_frame(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     });
 }
 
+/// A small rounded status pill, e.g. `badge(ui, icon::CHECK_CIRCLE, "Signature verified", theme::DIFF_ADDED)`.
+pub fn badge(ui: &mut egui::Ui, glyph: &str, text: &str, color: egui::Color32) {
+    egui::Frame::new().fill(color.gamma_multiply(0.18)).stroke(egui::Stroke::new(1.0_f32, color.gamma_multiply(0.6)))
+        .corner_radius(10).inner_margin(egui::Margin::symmetric(8, 3))
+        .show(ui, |ui| { ui.label(egui::RichText::new(format!("{glyph}  {text}")).color(color)); });
+}
+
 /// Shows `error` in a red banner with a warning icon, or nothing when it is empty.
 pub fn error_label(ui: &mut egui::Ui, error: &str) {
     if error.is_empty() { return; }
@@ -341,6 +443,10 @@ pub struct TextIo {
     /// Syntax highlighting of each pane (`None` = plain text).
     pub input_syntax: Option<&'static str>,
     pub output_syntax: Option<&'static str>,
+    /// The selected action ("mode"): it runs again whenever the input changes.
+    pub active: usize,
+    /// Pending live update after the input changed.
+    pub live: Debounce,
 }
 
 impl TextIo {
@@ -356,35 +462,45 @@ impl TextIo {
         self.error.clear();
     }
 
-    /// Draws the input pane (toolbar + editor) and returns the index of the
-    /// action button that was clicked this frame. The first action is the
-    /// primary one. With a `sample`, a "Sample" button loads it and runs the
-    /// primary action.
-    pub fn input_pane(&mut self, ui: &mut egui::Ui, actions: &[&str], hint: &str, sample: Option<&str>) -> Option<usize> {
-        let clicked = toolbar(ui, "Input:", |ui| {
-            paste_button(ui, &mut self.input, &mut self.error);
-            let mut clicked = None;
+    /// Draws the input pane (toolbar + editor). The action buttons act as a
+    /// mode switch: the selected one is highlighted and re-runs live as the
+    /// input changes. Returns true when the result should be recomputed now
+    /// (mode changed, sample loaded, or the input changed).
+    pub fn input_pane(&mut self, ui: &mut egui::Ui, actions: &[&str], hint: &str, sample: Option<&str>) -> bool {
+        let mut run_now = false;
+        toolbar(ui, "Input:", |ui| {
+            if paste_button(ui, &mut self.input, &mut self.error) { self.live.touch(ui.ctx()); }
             if let Some(sample) = sample {
                 if sample_button(ui) {
                     self.input = sample.to_owned();
-                    clicked = Some(0);
+                    self.active = 0;
+                    run_now = true;
                 }
             }
             if clear_button(ui) { self.clear(); }
             ui.separator();
             for (i, label) in actions.iter().enumerate() {
-                if ui.add(action_button(*label, i == 0)).clicked() { clicked = Some(i); }
+                if ui.add(action_button(*label, i == self.active)).clicked() {
+                    self.active = i;
+                    run_now = true;
+                }
             }
-            clicked
         });
-        code_editor(ui, "input", &mut self.input, hint, Highlight::syntax(self.input_syntax));
-        clicked
+        if code_editor(ui, "input", &mut self.input, hint, Highlight::syntax(self.input_syntax)).changed() {
+            self.live.touch(ui.ctx());
+        }
+        run_now || self.live.due(ui.ctx(), self.input.len())
     }
 
-    /// Draws the output pane: toolbar with Copy, the error if any, then the result.
-    pub fn output_pane(&mut self, ui: &mut egui::Ui) {
-        toolbar(ui, "Output:", |ui| copy_button(ui, &self.output));
+    /// Draws the output pane: toolbar with Copy and whatever `extra` adds
+    /// (it receives the output text), the error if any, then the result.
+    pub fn output_pane<R>(&mut self, ui: &mut egui::Ui, extra: impl FnOnce(&mut egui::Ui, &str) -> R) -> R {
+        let result = toolbar(ui, "Output:", |ui| {
+            copy_button(ui, &self.output);
+            extra(ui, &self.output)
+        });
         error_label(ui, &self.error);
         code_editor(ui, "output", &mut self.output, "", Highlight::syntax(self.output_syntax));
+        result
     }
 }

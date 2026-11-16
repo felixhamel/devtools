@@ -1,7 +1,9 @@
 //! CSS and SCSS beautifier / minifier.
 //!
 //! Works on a small token stream rather than a full parser, which keeps comments
-//! and handles SCSS (nesting, `//` comments, `#{…}` interpolation) the same way.
+//! and handles SCSS (nesting, `//` comments, `#{…}` interpolation). The SCSS
+//! rules are safe for plain CSS: `//` only counts as a comment outside strings
+//! and parentheses (so `url(http://…)` is untouched), and `#{` never occurs in CSS.
 
 #[derive(Debug, PartialEq)]
 enum Tok { Text(String), Space, Comment(String), Open, Close, Semi }
@@ -9,7 +11,7 @@ enum Tok { Text(String), Space, Comment(String), Open, Close, Semi }
 /// Splits CSS/SCSS into the pieces that drive layout. Strings, the contents of
 /// parentheses (e.g. `url(data:…;…)`) and SCSS `#{…}` stay inside `Text`, so the
 /// braces and semicolons they contain are not mistaken for structure.
-fn tokens(src: &str, scss: bool) -> Result<Vec<Tok>, String> {
+fn tokens(src: &str) -> Result<Vec<Tok>, String> {
     let chars: Vec<char> = src.chars().collect();
     let mut toks = Vec::new();
     let mut text = String::new();
@@ -33,15 +35,14 @@ fn tokens(src: &str, scss: bool) -> Result<Vec<Tok>, String> {
                 toks.push(Tok::Comment(chars[i..end + 2].iter().collect()));
                 i = end + 1;
             }
-            // In plain CSS `//` is not a comment (it appears in `url(http://…)`).
-            '/' if scss && next == Some('/') && paren == 0 => {
+            '/' if next == Some('/') && paren == 0 => {
                 flush(&mut text, &mut toks);
                 let end = (i..chars.len()).find(|&j| chars[j] == '\n').unwrap_or(chars.len());
                 toks.push(Tok::Comment(chars[i..end].iter().collect::<String>().trim_end().to_string()));
                 i = end;
                 continue;
             }
-            '#' if scss && next == Some('{') => {
+            '#' if next == Some('{') => {
                 let start = i;
                 let mut depth = 0;
                 while i < chars.len() {
@@ -67,12 +68,12 @@ fn tokens(src: &str, scss: bool) -> Result<Vec<Tok>, String> {
 
 /// One declaration or selector per line, 2-space indentation, a blank line
 /// between top-level blocks. A missing final `;` before `}` is added.
-pub(super) fn beautify(src: &str, scss: bool) -> Result<String, String> {
+pub(super) fn beautify(src: &str) -> Result<String, String> {
     let mut out: Vec<String> = Vec::new();
     let mut line = String::new();
     let mut depth = 0usize;
     let emit = |out: &mut Vec<String>, depth: usize, s: &str| out.push(format!("{}{s}", "  ".repeat(depth)));
-    for tok in tokens(src, scss)? {
+    for tok in tokens(src)? {
         match tok {
             Tok::Text(s) => line.push_str(&s),
             Tok::Space => if !line.is_empty() && !line.ends_with(' ') { line.push(' ') },
@@ -108,10 +109,10 @@ pub(super) fn beautify(src: &str, scss: bool) -> Result<String, String> {
 /// Drops comments and collapses whitespace. Spaces are removed around `{ } ;`
 /// and after `:` and `,`, which never changes meaning; a space *before* `:` is
 /// kept because `a :hover` and `a:hover` are different selectors.
-pub(super) fn minify(src: &str, scss: bool) -> Result<String, String> {
+pub(super) fn minify(src: &str) -> Result<String, String> {
     let mut out = String::new();
     let mut space = false;
-    for tok in tokens(src, scss)? {
+    for tok in tokens(src)? {
         match tok {
             Tok::Space | Tok::Comment(_) => space = true,
             Tok::Text(s) => {
@@ -134,21 +135,21 @@ mod tests {
     #[test]
     fn css_beautify_and_minify() {
         let src = "a,b{color:red;margin:0 auto}/* note */\n@media (max-width: 10px){.x{background:url(data:a;b)}}";
-        assert_eq!(beautify(src, false).unwrap(),
+        assert_eq!(beautify(src).unwrap(),
             "a,b {\n  color:red;\n  margin:0 auto;\n}\n\n/* note */\n@media (max-width: 10px) {\n  .x {\n    background:url(data:a;b);\n  }\n}");
-        assert_eq!(minify(&beautify(src, false).unwrap(), false).unwrap(),
+        assert_eq!(minify(&beautify(src).unwrap()).unwrap(),
             "a,b{color:red;margin:0 auto}@media (max-width:10px){.x{background:url(data:a;b)}}");
-        assert_eq!(minify("a { content: \"x ; }\" ; }", false).unwrap(), "a{content:\"x ; }\"}");
-        assert!(beautify("a {", false).is_err());
-        assert!(beautify("}", false).is_err());
+        assert_eq!(minify("a { content: \"x ; }\" ; }").unwrap(), "a{content:\"x ; }\"}");
+        assert!(beautify("a {").is_err());
+        assert!(beautify("}").is_err());
     }
 
     #[test]
     fn scss_comments_nesting_and_interpolation() {
         let src = "// top\n$w: 10px;\n.a { &:hover { width: #{$w}; } // inline\n}";
-        assert_eq!(beautify(src, true).unwrap(),
+        assert_eq!(beautify(src).unwrap(),
             "// top\n$w: 10px;\n.a {\n  &:hover {\n    width: #{$w};\n  }\n  // inline\n}");
-        assert_eq!(minify(src, true).unwrap(), "$w:10px;.a{&:hover{width:#{$w}}}");
-        assert_eq!(minify("a { b: url(http://x) }", false).unwrap(), "a{b:url(http://x)}");
+        assert_eq!(minify(src).unwrap(), "$w:10px;.a{&:hover{width:#{$w}}}");
+        assert_eq!(minify("a { b: url(http://x) }").unwrap(), "a{b:url(http://x)}");
     }
 }

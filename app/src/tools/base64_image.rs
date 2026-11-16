@@ -5,7 +5,7 @@ use super::{encoding::decode_base64, Category, Tool};
 use crate::ui::{self, icon};
 
 #[derive(Default)]
-pub struct Base64Image { text: String, path: String, info: String, error: String, texture: Option<egui::TextureHandle> }
+pub struct Base64Image { text: String, path: String, info: String, error: String, texture: Option<egui::TextureHandle>, live: ui::Debounce }
 
 impl Base64Image {
     /// Decodes `bytes` as an image and uploads it as the preview texture.
@@ -14,6 +14,12 @@ impl Base64Image {
             Ok((info, image)) => { self.info = info; self.error.clear(); self.texture = Some(ctx.load_texture("base64-image", image, Default::default())); }
             Err(e) => { self.info.clear(); self.error = e; self.texture = None; }
         }
+    }
+
+    /// Decodes the Base64 text field into the preview (an empty field clears it).
+    fn decode_text(&mut self, ctx: &egui::Context) {
+        if self.text.trim().is_empty() { self.info.clear(); self.error.clear(); self.texture = None; return; }
+        match decode(&self.text) { Ok(bytes) => self.show(ctx, &bytes), Err(e) => { self.info.clear(); self.error = e; self.texture = None; } }
     }
 
     /// Encodes image bytes as a data URI and previews them.
@@ -45,13 +51,11 @@ impl Tool for Base64Image {
         ui.add_space(10.0);
         ui::split(ui, |left, right| {
             ui::toolbar(left, "Input:", |ui| {
-                ui::paste_button(ui, &mut self.text, &mut self.error);
+                if ui::paste_button(ui, &mut self.text, &mut self.error) { self.live.touch(ui.ctx()); }
                 if ui::clear_button(ui) { *self = Self::default(); }
                 ui::copy_button(ui, &self.text);
                 ui.separator();
-                if ui.add(ui::action_button("Decode", true)).clicked() {
-                    match decode(&self.text) { Ok(bytes) => self.show(&ctx, &bytes), Err(e) => { self.info.clear(); self.error = e; self.texture = None; } }
-                }
+                if ui.add(ui::action_button("Decode", true)).clicked() { self.decode_text(&ctx); }
             });
             left.horizontal(|ui| {
                 let encode = ui.add(ui::icon_button(icon::FOLDER_OPEN, "Encode file", false)).clicked();
@@ -65,7 +69,9 @@ impl Tool for Base64Image {
                 }
             });
             left.add_space(6.0);
-            ui::fill_editor(left, "base64", &mut self.text, "data:image/png;base64,iVBORw0KGgo…");
+            if ui::fill_editor(left, "base64", &mut self.text, "data:image/png;base64,iVBORw0KGgo…").changed() { self.live.touch(left.ctx()); }
+            // Decode as the Base64 is pasted or typed.
+            if self.live.due(left.ctx(), self.text.len()) { self.decode_text(&ctx); }
             ui::toolbar(right, "Preview:", |ui| { ui.label(egui::RichText::new(&self.info).color(ui::MUTED)); });
             ui::error_label(right, &self.error);
             ui::preview_frame(right, |ui| {

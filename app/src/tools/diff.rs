@@ -7,7 +7,7 @@ const SAMPLE_ORIGINAL: &str = "name: DevUtils\nversion: 1.0\nfeatures:\n  - json
 const SAMPLE_MODIFIED: &str = "name: DevUtils\nversion: 1.1\nfeatures:\n  - json\n  - regex\n  - diff";
 
 #[derive(Default)]
-pub struct Diff { left: String, right: String, output: String, error: String }
+pub struct Diff { left: String, right: String, output: String, error: String, live: ui::Debounce }
 
 impl Tool for Diff {
     fn name(&self) -> &'static str { "Text Diff Checker" }
@@ -22,11 +22,13 @@ impl Tool for Diff {
         ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
             ui::split(ui, |left, right| {
                 ui::toolbar(left, "Original:", |ui| { ui::paste_button(ui, &mut self.left, &mut self.error); });
-                ui::fill_editor(left, "original", &mut self.left, "Original text…");
+                if ui::fill_editor(left, "original", &mut self.left, "Original text…").changed() { self.live.touch(left.ctx()); }
                 ui::toolbar(right, "Modified:", |ui| { ui::paste_button(ui, &mut self.right, &mut self.error); });
-                ui::fill_editor(right, "modified", &mut self.right, "Modified text…");
+                if ui::fill_editor(right, "modified", &mut self.right, "Modified text…").changed() { self.live.touch(right.ctx()); }
             });
         });
+        // Compare as you type (after a short pause for large texts).
+        if self.live.due(ui.ctx(), self.left.len() + self.right.len()) { self.output = diff_lines(&self.left, &self.right); }
         ui.add_space(10.0);
         ui::toolbar(ui, "Differences:", |ui| {
             if ui.add(ui::icon_button(icon::GIT_DIFF, "Compare", true)).clicked() { self.output = diff_lines(&self.left, &self.right); self.error.clear(); }
@@ -41,6 +43,14 @@ impl Tool for Diff {
     fn load_sample(&mut self) {
         self.left = SAMPLE_ORIGINAL.into();
         self.right = SAMPLE_MODIFIED.into();
+        self.output = diff_lines(&self.left, &self.right);
+    }
+
+    fn accepts_input(&self) -> bool { true }
+
+    /// Received text becomes the "Modified" side.
+    fn set_input(&mut self, text: &str) {
+        self.right = text.to_owned();
         self.output = diff_lines(&self.left, &self.right);
     }
 }

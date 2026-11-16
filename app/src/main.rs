@@ -60,6 +60,7 @@ impl App {
         let logo = image::imageops::resize(icon, 144, 144, image::imageops::FilterType::Lanczos3);
         let logo = egui::ColorImage::from_rgba_unmultiplied([logo.width() as usize, logo.height() as usize], logo.as_raw());
         let mut tools = tools::registry();
+        tools::publish_directory(&cc.egui_ctx, &tools);
         let selected = args.tool.and_then(|wanted| tools.iter().position(|t| t.name().eq_ignore_ascii_case(&wanted)));
         if let (Some(i), true) = (selected, args.sample) { tools[i].load_sample(); }
         Self {
@@ -208,6 +209,13 @@ impl eframe::App for App {
                 None => self.welcome(ui),
             }
         });
+        // A ⇄ menu asked to send a result to another tool: fill it and open it.
+        if let Some(request) = tools::take_send_request(ctx) {
+            if let Some(i) = self.tools.iter().position(|t| t.name() == request.target) {
+                self.tools[i].set_input(&request.text);
+                self.selected = Some(i);
+            }
+        }
     }
 }
 

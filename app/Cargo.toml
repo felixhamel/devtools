@@ -8,7 +8,6 @@ edition = "2021"
 eframe = "0.31"
 serde_json = { version = "1", features = ["preserve_order"] }
 base64 = "0.22"
-urlencoding = "2"
 image = { version = "0.25", default-features = false, features = ["bmp", "jpeg", "png", "webp"] }
 winit = "0.30"
 regex = "1.13.1"
@@ -23,7 +22,6 @@ quick-xml = "0.42"
 oxc = { version = "0.158", features = ["codegen", "minifier"] }
 croner = "4"
 chrono = "0.4"
-shlex = "2"
 x509-parser = "0.18"
 rqrr = { version = "0.11", default-features = false }
 qrcode = { version = "0.14", default-features = false }
@@ -31,7 +29,16 @@ similar = "3.2.1"
 html-escape = "0.3.1"
 getrandom = "0.3"
 egui-phosphor = "0.9"
-egui_extras = { version = "0.31", default-features = false, features = ["syntect"] }
+egui_extras = { version = "0.31", default-features = false, features = ["datepicker", "syntect"] }
+chrono-tz = "0.10"
+csscolorparser = "0.9"
+hmac = "0.13"
+bip39 = { version = "3", default-features = false, features = ["std"] }
+serde = "1"
+unicode-segmentation = "1"
+unicode-normalization = "0.1"
+percent-encoding = "2"
+unicode_names2 = "4"
 
 [profile.release]
 # Smallest binary (~24 MB instead of ~35 MB) at the cost of a slower release

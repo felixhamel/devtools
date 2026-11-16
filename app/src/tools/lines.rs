@@ -1,12 +1,26 @@
 //! Line Sort/Dedupe: sort, deduplicate and trim a list, one entry per line.
 use eframe::egui;
 use super::{Category, Tool};
-use crate::ui::{self, icon, theme};
+use crate::ui::{self, icon};
 
 const SAMPLE: &str = "banana\nApple\ncherry\napple\n  banana  \ndate\nCherry";
 
+/// The three action buttons: label, sort, keep unique lines.
+const ACTIONS: [(&str, bool, bool); 3] = [("Sort + unique", true, true), ("Sort", true, false), ("Unique", false, true)];
+
 #[derive(Default)]
-pub struct Lines { input: String, output: String, error: String, sort_desc: bool, dedupe: bool, ignore_case: bool, trim_lines: bool }
+pub struct Lines {
+    input: String,
+    output: String,
+    error: String,
+    /// Index into [`ACTIONS`]; re-applied whenever the input or an option changes.
+    action: usize,
+    sort_desc: bool,
+    dedupe: bool,
+    ignore_case: bool,
+    trim_lines: bool,
+    live: ui::Debounce,
+}
 
 /// The options that shape the result, independent of the UI.
 #[derive(Clone, Copy, Default)]
@@ -38,29 +52,30 @@ impl Tool for Lines {
         ui::description(ui, "Clean up and organize a list, one entry per line.");
         ui.add_space(10.0);
         ui::split(ui, |left, right| {
-            let clicked = ui::toolbar(left, "Input:", |ui| {
-                ui::paste_button(ui, &mut self.input, &mut self.error);
-                let mut clicked = None;
+            let mut run_now = false;
+            ui::toolbar(left, "Input:", |ui| {
+                if ui::paste_button(ui, &mut self.input, &mut self.error) { run_now = true; }
                 if ui::sample_button(ui) { self.load_sample(); }
                 if ui::clear_button(ui) { self.input.clear(); self.output.clear(); self.error.clear(); }
                 ui.separator();
-                for (label, sort, unique) in [("Sort + unique", true, true), ("Sort", true, false), ("Unique", false, true)] {
-                    if ui.add(ui::action_button(label, sort && unique)).clicked() { clicked = Some((sort, unique)); }
+                for (i, (label, _, _)) in ACTIONS.iter().enumerate() {
+                    if ui.add(ui::action_button(*label, i == self.action)).clicked() { self.action = i; run_now = true; }
                 }
-                clicked
             });
             left.horizontal_wrapped(|ui| {
-                ui.visuals_mut().selection.bg_fill = theme::ACCENT_DARK;
-                ui.checkbox(&mut self.ignore_case, "Ignore case");
-                ui.checkbox(&mut self.trim_lines, "Trim whitespace");
-                ui.checkbox(&mut self.dedupe, "Remove duplicates");
-                ui.checkbox(&mut self.sort_desc, "Descending");
+                for (value, label) in [(&mut self.ignore_case, "Ignore case"), (&mut self.trim_lines, "Trim whitespace"), (&mut self.dedupe, "Remove duplicates"), (&mut self.sort_desc, "Descending")] {
+                    run_now |= ui.checkbox(value, label).changed();
+                }
             });
             left.add_space(6.0);
-            if let Some((sort, unique)) = clicked { self.run(sort, unique); }
             ui::error_label(left, &self.error);
-            ui::fill_editor(left, "input", &mut self.input, "Paste your list here…");
-            ui::toolbar(right, "Output:", |ui| ui::copy_button(ui, &self.output));
+            if ui::fill_editor(left, "input", &mut self.input, "Paste your list here…").changed() { self.live.touch(left.ctx()); }
+            if run_now || self.live.due(left.ctx(), self.input.len()) { self.run(); }
+            let reuse = ui::toolbar(right, "Output:", |ui| {
+                ui::copy_button(ui, &self.output);
+                super::reuse_menu(ui, &self.output, "Line Sort/Dedupe")
+            });
+            if reuse { self.input = std::mem::take(&mut self.output); self.run(); }
             ui::fill_editor(right, "output", &mut self.output, "");
         });
     }
@@ -70,13 +85,22 @@ impl Tool for Lines {
         self.input = SAMPLE.into();
         self.ignore_case = true;
         self.trim_lines = true;
-        self.run(true, true);
+        self.action = 0;
+        self.run();
+    }
+
+    fn accepts_input(&self) -> bool { true }
+
+    fn set_input(&mut self, text: &str) {
+        self.input = text.to_owned();
+        self.run();
     }
 }
 
 impl Lines {
-    /// Applies an action button ("Sort", "Unique"…) with the current checkboxes.
-    fn run(&mut self, sort: bool, unique: bool) {
+    /// Applies the selected action with the current options.
+    fn run(&mut self) {
+        let (_, sort, unique) = ACTIONS[self.action];
         let options = Options { sort, unique: unique || self.dedupe, descending: self.sort_desc, ignore_case: self.ignore_case, trim: self.trim_lines };
         self.output = process(&self.input, options);
     }

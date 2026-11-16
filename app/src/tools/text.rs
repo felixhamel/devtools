@@ -1,8 +1,5 @@
-//! Text tools and generators, plus helpers shared with other tools
-//! (`random_bytes`, `words`).
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use super::{Category, TextTool, Tool};
-use crate::ui::icon;
+//! Text helpers shared by several tools: secure random bytes, word splitting
+//! and capitalization.
 
 /// `N` bytes from the operating system's secure random number generator.
 pub fn random_bytes<const N: usize>() -> Result<[u8; N], String> {
@@ -37,58 +34,9 @@ pub fn words(text: &str) -> Vec<String> {
     words
 }
 
-fn capitalize(word: &str) -> String {
+pub fn capitalize(word: &str) -> String {
     let mut chars = word.chars();
     chars.next().map(|first| first.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()
-}
-
-pub fn lorem_ipsum() -> Box<dyn Tool> {
-    Box::new(TextTool::new("Lorem Ipsum Generator", icon::PARAGRAPH, Category::Text, vec![("Generate", |_| Ok(
-        "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n\nUt enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.".into()
-    ))]))
-}
-
-pub fn string_inspector() -> Box<dyn Tool> {
-    Box::new(TextTool::new("String Inspector", icon::MAGNIFYING_GLASS, Category::Text, vec![("Inspect", |s| Ok(
-        format!("Characters: {}\nWords: {}\nLines: {}\nBytes: {}", s.chars().count(), s.split_whitespace().count(), s.lines().count(), s.len())
-    ))]).sample(r#"Hello, wörld! 👋
-Second line"#).key_value_output())
-}
-
-pub fn case_converter() -> Box<dyn Tool> {
-    Box::new(TextTool::new("String Case Converter", icon::TEXT_AA, Category::Text, vec![("Convert", convert_case)]).sample(r#"parseHTTPResponse body"#).key_value_output())
-}
-
-fn convert_case(input: &str) -> Result<String, String> {
-    let words = words(input);
-    let title: Vec<String> = words.iter().map(|w| capitalize(w)).collect();
-    let camel = words.first().cloned().unwrap_or_default() + &title.iter().skip(1).cloned().collect::<String>();
-    Ok([
-        format!("lowercase: {}", input.to_lowercase()),
-        format!("UPPERCASE: {}", input.to_uppercase()),
-        format!("camelCase: {camel}"),
-        format!("PascalCase: {}", title.concat()),
-        format!("snake_case: {}", words.join("_")),
-        format!("CONSTANT_CASE: {}", words.join("_").to_uppercase()),
-        format!("kebab-case: {}", words.join("-")),
-        format!("Title Case: {}", title.join(" ")),
-    ].join("\n"))
-}
-
-pub fn color() -> Box<dyn Tool> {
-    Box::new(TextTool::new("Color Converter", icon::PALETTE, Category::Text, vec![("Inspect", |input| {
-        let h = input.trim().trim_start_matches('#');
-        if h.len() != 6 || !h.is_ascii() { return Err("Enter a six-digit hex color, for example #56D28F".into()); }
-        let n = u32::from_str_radix(h, 16).map_err(|e| e.to_string())?;
-        Ok(format!("HEX: #{n:06X}\nRGB: {}, {}, {}", n >> 16, (n >> 8) & 255, n & 255))
-    })]).sample(r#"#56D28F"#).key_value_output())
-}
-
-pub fn random_string() -> Box<dyn Tool> {
-    Box::new(TextTool::new("Random String Generator", icon::DICE_FIVE, Category::Text, vec![
-        // 24 random bytes → 32 URL-safe characters.
-        ("Generate", |_| Ok(URL_SAFE_NO_PAD.encode(random_bytes::<24>()?))),
-    ]))
 }
 
 #[cfg(test)]
@@ -101,15 +49,6 @@ mod tests {
         assert_eq!(words("HTTPServer_id-2x"), ["http", "server", "id", "2x"]);
         assert_eq!(words("user ID v2Beta"), ["user", "id", "v2", "beta"]);
         assert!(words(" -_ ").is_empty());
-    }
-
-    #[test]
-    fn converts_camel_case_input() {
-        let out = convert_case("parseHTTPResponse").unwrap();
-        assert!(out.contains("snake_case: parse_http_response"), "{out}");
-        assert!(out.contains("camelCase: parseHttpResponse"), "{out}");
-        assert!(out.contains("CONSTANT_CASE: PARSE_HTTP_RESPONSE"), "{out}");
-        assert!(out.contains("Title Case: Parse Http Response"), "{out}");
     }
 
     #[test]
