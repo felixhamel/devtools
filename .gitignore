@@ -20,3 +20,6 @@
 
 # Icon proposals that were not chosen
 /app/assets/icon-candidates/
+
+# macOS bundle and release zip built by scripts/bundle-macos.sh
+/dist/

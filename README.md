@@ -44,6 +44,15 @@ cargo build --release    # optimized binary: app/target/release/devutils
 
 The release profile uses full link-time optimization for a smaller binary, so a release build takes a few minutes.
 
+### Install as a macOS app
+
+```sh
+scripts/bundle-macos.sh             # builds dist/DevUtils.app and a release zip
+scripts/bundle-macos.sh --install   # ...and copies DevUtils.app to /Applications
+```
+
+Release builds are also attached to the [GitHub releases](../../releases). The app is signed ad hoc, not notarized: after downloading it, allow it once with right-click → **Open**, or run `xattr -dr com.apple.quarantine /Applications/DevUtils.app`.
+
 The interface uses the macOS system fonts (SF Pro, SF Mono), loaded from `/System/Library/Fonts` at startup. They are not bundled; on other systems egui's default fonts are used. Icons come from [Phosphor](https://phosphoricons.com) via `egui-phosphor`.
 
 ### Command-line options
