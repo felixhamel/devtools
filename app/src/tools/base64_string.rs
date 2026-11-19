@@ -69,6 +69,7 @@ impl Tool for Base64String {
     fn category(&self) -> Category { Category::Encoding }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
+        let area = ui.available_rect_before_wrap();
         // A file dropped on the window is encoded as is.
         for file in ui.ctx().input(|i| i.raw.dropped_files.clone()) {
             let Some(path) = &file.path else { continue };
@@ -111,6 +112,7 @@ impl Tool for Base64String {
             if reuse { self.io.input = std::mem::take(&mut self.io.output); self.file = None; run_now = true; }
             if run_now { self.run(); }
         });
+        ui::drop_hint(ui.ctx(), area, "Drop a file to encode it");
     }
 
     fn load_sample(&mut self) {

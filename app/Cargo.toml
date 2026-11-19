@@ -39,6 +39,7 @@ unicode-segmentation = "1"
 unicode-normalization = "0.1"
 percent-encoding = "2"
 unicode_names2 = "4"
+rfd = { version = "0.18", default-features = false }
 
 [profile.release]
 # Smallest binary (~24 MB instead of ~35 MB) at the cost of a slower release

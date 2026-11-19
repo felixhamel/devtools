@@ -41,6 +41,25 @@ pub mod theme {
     pub const DIFF_ADDED: Color32 = Color32::from_rgb(130, 220, 169);
     pub const DIFF_REMOVED: Color32 = Color32::from_rgb(255, 135, 125);
     pub const WARNING: Color32 = Color32::from_rgb(240, 185, 95);
+    /// Line-number gutter and folded lines of the compare views.
+    pub const GUTTER: Color32 = Color32::from_rgb(36, 36, 37);
+    pub const FOLD: Color32 = Color32::from_rgb(40, 45, 52);
+    /// Background of the missing side of a line in the side-by-side compare view.
+    pub const FILLER: Color32 = Color32::from_rgb(26, 26, 26);
+    /// Pixels that differ in the image compare.
+    pub const HOT: Color32 = Color32::from_rgb(255, 64, 129);
+    pub const TOAST_BG: Color32 = Color32::from_rgb(52, 56, 54);
+    /// Tool cards on the home screen.
+    pub const CARD: Color32 = Color32::from_rgb(53, 51, 51);
+    pub const CARD_HOVER: Color32 = Color32::from_rgb(62, 61, 61);
+    pub const PALETTE_BG: Color32 = Color32::from_rgb(40, 40, 42);
+    /// One color per sidebar category (icons on the home screen and in the palette).
+    pub const AMBER: Color32 = Color32::from_rgb(240, 185, 95);
+    pub const BLUE: Color32 = Color32::from_rgb(120, 170, 255);
+    pub const VIOLET: Color32 = Color32::from_rgb(180, 150, 255);
+    pub const ROSE: Color32 = Color32::from_rgb(255, 135, 125);
+    pub const PINK: Color32 = Color32::from_rgb(255, 120, 190);
+    pub const CYAN: Color32 = Color32::from_rgb(110, 210, 230);
 }
 
 pub use theme::MUTED;
@@ -65,6 +84,12 @@ impl Debounce {
     pub fn touch(&mut self, ctx: &egui::Context) {
         self.pending = true;
         self.since = ctx.input(|i| i.time);
+    }
+
+    /// Asks for a run on the next frame, e.g. after the input was set from outside the tool.
+    pub fn trigger(&mut self) {
+        self.pending = true;
+        self.since = f64::NEG_INFINITY;
     }
 
     /// True once after a change: immediately for small inputs, after a pause
@@ -220,8 +245,6 @@ pub enum Highlight<'a> {
     Syntax(&'a str),
     /// Byte ranges drawn on a green background (e.g. regex matches).
     Ranges(&'a [std::ops::Range<usize>]),
-    /// Diff output: `+` lines green, `-` lines red, unchanged lines muted.
-    Diff,
     /// "Key: value" lines: keys muted, values bright.
     KeyValue,
     /// Byte ranges drawn in the given text colors (e.g. the three parts of a JWT).
@@ -281,10 +304,9 @@ pub fn code_editor(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str, h
                     };
                     ui.add(editor.layouter(&mut layouter))
                 }
-                Highlight::Diff | Highlight::KeyValue => {
-                    let diff = matches!(highlight, Highlight::Diff);
+                Highlight::KeyValue => {
                     let mut layouter = |ui: &egui::Ui, string: &str, wrap_width: f32| {
-                        let mut job = if diff { diff_job(ui, string) } else { key_value_job(ui, string) };
+                        let mut job = key_value_job(ui, string);
                         job.wrap.max_width = wrap_width;
                         ui.fonts(|fonts| fonts.layout_job(job))
                     };
@@ -305,7 +327,7 @@ pub fn code_editor(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str, h
 }
 
 /// Syntax-highlighted layout of `text` (results are cached by egui_extras).
-fn syntax_job(ui: &egui::Ui, text: &str, language: &str) -> egui::text::LayoutJob {
+pub fn syntax_job(ui: &egui::Ui, text: &str, language: &str) -> egui::text::LayoutJob {
     let theme = egui_extras::syntax_highlighting::CodeTheme::from_style(ui.style());
     let mut job = egui_extras::syntax_highlighting::highlight(ui.ctx(), ui.style(), &theme, text, language);
     // egui_extras 0.31 underlines everything italic; keep the italics only.
@@ -358,17 +380,6 @@ fn spans_job(ui: &egui::Ui, text: &str, spans: &[(std::ops::Range<usize>, egui::
         pos = range.end;
     }
     job.append(&text[pos..], 0.0, egui::TextFormat::simple(font, MUTED));
-    job
-}
-
-/// Colors each line of a diff by its first character.
-fn diff_job(ui: &egui::Ui, text: &str) -> egui::text::LayoutJob {
-    let font = egui::TextStyle::Monospace.resolve(ui.style());
-    let mut job = egui::text::LayoutJob::default();
-    for line in text.split_inclusive('\n') {
-        let color = match line.as_bytes().first() { Some(b'+') => theme::DIFF_ADDED, Some(b'-') => theme::DIFF_REMOVED, _ => MUTED };
-        job.append(line, 0.0, egui::TextFormat::simple(font.clone(), color));
-    }
     job
 }
 
@@ -503,4 +514,106 @@ impl TextIo {
         code_editor(ui, "output", &mut self.output, "", Highlight::syntax(self.output_syntax));
         result
     }
+}
+
+/// Joined toggle buttons of which exactly one is selected, e.g. view modes.
+/// Returns true when the user picked another option.
+pub fn segmented<T: PartialEq + Copy>(ui: &mut egui::Ui, current: &mut T, options: &[(T, &str)]) -> bool {
+    let mut changed = false;
+    egui::Frame::new().fill(theme::SEARCH_BG).stroke(egui::Stroke::new(1.0_f32, theme::EDITOR_STROKE))
+        .corner_radius(6).inner_margin(2)
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.horizontal(|ui| {
+                for (value, label) in options {
+                    let selected = *current == *value;
+                    let text = egui::RichText::new(*label).size(12.5).color(if selected { theme::ON_ACCENT } else { theme::TEXT });
+                    let fill = if selected { theme::ACCENT_STRONG } else { egui::Color32::TRANSPARENT };
+                    let button = egui::Button::new(text).fill(fill).stroke(egui::Stroke::NONE).corner_radius(4);
+                    if ui.add(button).clicked() && !selected {
+                        *current = *value;
+                        changed = true;
+                    }
+                }
+            });
+        });
+    changed
+}
+
+/// Shows the system Open dialog (blocking) and returns the chosen files.
+/// `extensions` limits the choice to those types; empty means any file.
+pub fn pick_files(title: &str, extensions: &[&str]) -> Vec<std::path::PathBuf> {
+    let mut dialog = rfd::FileDialog::new().set_title(title);
+    if !extensions.is_empty() { dialog = dialog.add_filter("Supported files", extensions); }
+    dialog.pick_files().unwrap_or_default()
+}
+
+/// Name and bytes of a file dropped on the window.
+pub fn read_dropped(file: &egui::DroppedFile) -> Result<(String, Vec<u8>), String> {
+    match (&file.path, &file.bytes) {
+        (Some(path), _) => read_path(path),
+        (None, Some(bytes)) => Ok((file.name.clone(), bytes.to_vec())),
+        _ => Err(format!("Cannot read {}", file.name)),
+    }
+}
+
+/// Name and bytes of a file on disk.
+pub fn read_path(path: &std::path::Path) -> Result<(String, Vec<u8>), String> {
+    let name = path.file_name().map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned());
+    std::fs::read(path).map(|bytes| (name, bytes)).map_err(|e| format!("Cannot read {}: {e}", path.display()))
+}
+
+/// While files are dragged over the window, covers `rect` with a dashed
+/// "drop here" frame and `text`.
+pub fn drop_hint(ctx: &egui::Context, rect: egui::Rect, text: &str) {
+    if ctx.input(|i| i.raw.hovered_files.is_empty()) { return; }
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("drop-hint")));
+    painter.rect_filled(rect, 10.0, egui::Color32::from_black_alpha(190));
+    let r = rect.shrink(8.0);
+    let corners = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+    painter.extend(egui::Shape::dashed_line(&corners, egui::Stroke::new(2.0_f32, theme::ACCENT), 10.0, 7.0));
+    painter.text(rect.center() - egui::vec2(0.0, 18.0), egui::Align2::CENTER_CENTER, icon::DOWNLOAD_SIMPLE, egui::FontId::proportional(42.0), theme::ACCENT);
+    painter.text(rect.center() + egui::vec2(0.0, 24.0), egui::Align2::CENTER_CENTER, text, egui::FontId::proportional(16.0), theme::TEXT_STRONG);
+}
+
+/// A message shown for a moment at the bottom of the window.
+#[derive(Clone)]
+struct Toast { glyph: &'static str, text: String, at: f64 }
+
+fn toast_id() -> egui::Id { egui::Id::new("devutils-toast") }
+
+/// Shows `text` at the bottom of the window for a few seconds (it replaces
+/// the previous message, if any).
+pub fn toast(ctx: &egui::Context, glyph: &'static str, text: impl Into<String>) {
+    let at = ctx.input(|i| i.time);
+    ctx.data_mut(|d| d.insert_temp(toast_id(), Toast { glyph, text: text.into(), at }));
+}
+
+/// Draws the current toast, sliding it in and fading it out. Called once per frame by the app.
+pub fn show_toast(ctx: &egui::Context) {
+    const SHOWN: f64 = 2.8;
+    const FADE: f64 = 0.25;
+    let Some(toast) = ctx.data(|d| d.get_temp::<Toast>(toast_id())) else { return };
+    let age = ctx.input(|i| i.time) - toast.at;
+    if age > SHOWN {
+        ctx.data_mut(|d| d.remove::<Toast>(toast_id()));
+        return;
+    }
+    let opacity = (age / FADE).min((SHOWN - age) / FADE).clamp(0.0, 1.0) as f32;
+    let rise = (1.0 - (age / FADE).min(1.0) as f32) * 14.0;
+    egui::Area::new(toast_id().with("area")).order(egui::Order::Tooltip).interactable(false)
+        .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -28.0 + rise))
+        .show(ctx, |ui| {
+            ui.multiply_opacity(opacity);
+            egui::Frame::new().fill(theme::TOAST_BG).stroke(egui::Stroke::new(1.0_f32, theme::ACCENT_DARK))
+                .corner_radius(18).inner_margin(egui::Margin::symmetric(16, 9))
+                .shadow(egui::Shadow { offset: [0, 6], blur: 18, spread: 0, color: egui::Color32::from_black_alpha(110) })
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(toast.glyph).size(15.0).color(theme::ACCENT));
+                        ui.label(egui::RichText::new(&toast.text).color(theme::TEXT_STRONG));
+                    });
+                });
+        });
+    ctx.request_repaint();
 }

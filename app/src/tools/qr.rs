@@ -34,6 +34,7 @@ impl Tool for Qr {
 
     fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        let area = ui.available_rect_before_wrap();
         for file in ctx.input(|i| i.raw.dropped_files.clone()) {
             if let Some(path) = &file.path { self.read_file(path); }
         }
@@ -85,6 +86,7 @@ impl Tool for Qr {
                 }
             });
         });
+        ui::drop_hint(&ctx, area, "Drop an image to read its QR code");
     }
 
     fn load_sample(&mut self) { self.text = "https://example.com/hello?from=devutils".into(); }

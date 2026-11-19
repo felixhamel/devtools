@@ -42,6 +42,7 @@ impl Tool for Base64Image {
 
     fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        let area = ui.available_rect_before_wrap();
         // Files dropped anywhere on the window while this tool is open.
         for file in ctx.input(|i| i.raw.dropped_files.clone()) {
             if let Some(path) = &file.path { self.encode_file(&ctx, path); }
@@ -80,6 +81,15 @@ impl Tool for Base64Image {
                 }
             });
         });
+        ui::drop_hint(&ctx, area, "Drop an image to encode it");
+    }
+
+    fn accepts_input(&self) -> bool { true }
+
+    /// Received Base64 or data URI is decoded on the next frame (textures need the egui context).
+    fn set_input(&mut self, text: &str) {
+        self.text = text.trim().to_owned();
+        self.live.trigger();
     }
 }
 

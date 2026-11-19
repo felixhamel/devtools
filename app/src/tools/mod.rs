@@ -13,12 +13,14 @@ mod base64_image;
 mod base64_string;
 mod case;
 mod code;
+mod code_compare;
 mod color;
 mod cron;
-mod diff;
+pub mod detect;
 mod encoding;
 mod format;
 mod identifiers;
+mod image_compare;
 mod inspector;
 mod json_format;
 mod jwt;
@@ -34,10 +36,10 @@ mod x509;
 
 /// Sidebar groups, shown in the order of [`Category::ALL`].
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Category { Date, Data, Encoding, Security, Text, Code }
+pub enum Category { Date, Data, Encoding, Security, Text, Compare, Code }
 
 impl Category {
-    pub const ALL: [Category; 6] = [Category::Date, Category::Data, Category::Encoding, Category::Security, Category::Text, Category::Code];
+    pub const ALL: [Category; 7] = [Category::Date, Category::Data, Category::Encoding, Category::Security, Category::Text, Category::Compare, Category::Code];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -46,7 +48,22 @@ impl Category {
             Category::Encoding => "Encoding",
             Category::Security => "Security & identifiers",
             Category::Text => "Text & generators",
+            Category::Compare => "Compare",
             Category::Code => "Code & markup",
+        }
+    }
+
+    /// The category's color, used for tool icons on the home screen and in the palette.
+    pub fn color(self) -> egui::Color32 {
+        use ui::theme;
+        match self {
+            Category::Date => theme::AMBER,
+            Category::Data => theme::BLUE,
+            Category::Encoding => theme::VIOLET,
+            Category::Security => theme::ROSE,
+            Category::Text => theme::ACCENT,
+            Category::Compare => theme::PINK,
+            Category::Code => theme::CYAN,
         }
     }
 }
@@ -235,7 +252,8 @@ pub fn registry() -> Vec<Box<dyn Tool>> {
         encoding::html_entity(),
         encoding::backslash(),
         Box::new(identifiers::Identifiers::default()),
-        Box::new(diff::Diff::default()),
+        Box::new(code_compare::CodeCompare::default()),
+        Box::new(image_compare::ImageCompare::default()),
         code::number_base(),
         format::html(),
         format::css(),
