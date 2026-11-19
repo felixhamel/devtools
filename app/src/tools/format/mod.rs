@@ -110,6 +110,9 @@ mod tests {
         assert_eq!(pretty, "<a>\n  <b x=\"1\">t</b>\n  <c/>\n</a>");
         assert_eq!(xml_rewrite(&pretty, false).unwrap(), "<a><b x=\"1\">t</b><c/></a>");
         assert!(xml_rewrite("<a><b></a>", true).is_err());
+        // Comments and CDATA sections are kept, as the tool's description says.
+        let kept = xml_rewrite("<a><!-- note --><![CDATA[x < y]]></a>", true).unwrap();
+        assert!(kept.contains("<!-- note -->") && kept.contains("<![CDATA[x < y]]>"), "{kept}");
     }
 
     #[test]
