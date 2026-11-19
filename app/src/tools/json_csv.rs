@@ -283,6 +283,32 @@ mod tests {
     }
 
     #[test]
+    fn detects_types_and_nesting_carefully() {
+        use serde_json::json;
+        assert_eq!(guess_delimiter("just words"), None);
+        assert_eq!(typed(" 42 ", true), json!(42));
+        assert_eq!(typed("TRUE", true), json!("TRUE"));
+        assert_eq!(typed("1e5", true), json!("1e5"));
+        assert_eq!(typed("[1, 2", true), json!("[1, 2"));
+        assert_eq!(typed("", false), json!(""));
+        let deep = csv_to_json("a.b.c,a.b.d,a.e\n1,2,3", b',', true, true).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&deep).unwrap(), json!([{"a": {"b": {"c": 1, "d": 2}, "e": 3}}]));
+        // A quoted field keeps its delimiter and its line break.
+        let quoted = csv_to_json("note\n\"a, b\nc\"", b',', true, true).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&quoted).unwrap(), json!([{"note": "a, b\nc"}]));
+    }
+
+    #[test]
+    fn the_tool_picks_the_direction_from_the_input() {
+        let mut tool = JsonCsv::default();
+        tool.set_input("id;name\n1;Ada");
+        assert_eq!(tool.io.active, 1);
+        assert_eq!(serde_json::from_str::<Value>(&tool.io.output).unwrap(), serde_json::json!([{"id": 1, "name": "Ada"}]));
+        tool.set_input("[{\"id\": 1}]");
+        assert_eq!((tool.io.active, tool.io.output.as_str()), (0, "id\n1"));
+    }
+
+    #[test]
     fn csv_options() {
         assert_eq!(Delimiter::Auto.reading("a;b;c\n1;2;3"), b';');
         assert_eq!(Delimiter::Auto.reading("a\tb,c\td"), b'\t');

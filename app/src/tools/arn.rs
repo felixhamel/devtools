@@ -159,6 +159,19 @@ mod tests {
     }
 
     #[test]
+    fn reads_more_shapes() {
+        let logs = parse_all("arn:aws-us-gov:logs:us-gov-west-1:123456789012:log-group:/aws/lambda/api:*").unwrap();
+        assert!(logs.contains("Partition name: AWS GovCloud (US)") && logs.contains("Region name: AWS GovCloud (US-West)"), "{logs}");
+        assert!(logs.contains("Resource type: log-group\nResource ID: /aws/lambda/api:*"), "{logs}");
+        // Wildcards from a policy are fine; quotes and commas around the ARN are left out.
+        let wildcard = parse_all("Resource: 'arn:aws:dynamodb:*:*:table/orders',").unwrap();
+        assert!(wildcard.contains("Account: *") && !wildcard.contains("Warning") && wildcard.ends_with("Resource ID: orders"), "{wildcard}");
+        // An unknown service or region has no name line.
+        let custom = parse_all("arn:aws:newsvc:xx-mars-1:123456789012:thing/1").unwrap();
+        assert!(!custom.contains("Service name") && !custom.contains("Region name"), "{custom}");
+    }
+
+    #[test]
     fn finds_every_arn_in_a_text() {
         let policy = r#"{"Resource": ["arn:aws:s3:::a-bucket", "arn:aws:s3:::a-bucket/*", "arn:aws:s3:::a-bucket"]}"#;
         let out = parse_all(policy).unwrap();

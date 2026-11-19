@@ -128,3 +128,58 @@ impl TextIo {
         result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Runs `check` inside a frame whose clock reads `time` seconds.
+    fn at(ctx: &egui::Context, time: f64, check: impl FnOnce(&egui::Context)) {
+        let mut check = Some(check);
+        let _ = ctx.run(egui::RawInput { time: Some(time), ..Default::default() }, |ctx| {
+            if let Some(check) = check.take() { check(ctx); }
+        });
+    }
+
+    #[test]
+    fn small_inputs_run_at_once() {
+        let ctx = egui::Context::default();
+        let mut live = Debounce::default();
+        at(&ctx, 1.0, |ctx| {
+            assert!(!live.due(ctx, 10), "nothing changed yet");
+            live.touch(ctx);
+            assert!(live.due(ctx, 10));
+            // Due once per change.
+            assert!(!live.due(ctx, 10));
+        });
+    }
+
+    #[test]
+    fn large_inputs_wait_for_a_pause() {
+        let ctx = egui::Context::default();
+        let mut live = Debounce::default();
+        let large = LIVE_IMMEDIATE_BYTES + 1;
+        at(&ctx, 1.0, |ctx| { live.touch(ctx); assert!(!live.due(ctx, large)); });
+        at(&ctx, 1.0 + LIVE_DELAY / 2.0, |ctx| assert!(!live.due(ctx, large)));
+        at(&ctx, 1.0 + LIVE_DELAY, |ctx| assert!(live.due(ctx, large)));
+        // A change from outside the tool runs on the next frame, whatever the size.
+        live.trigger();
+        at(&ctx, 2.0, |ctx| assert!(live.due(ctx, large)));
+    }
+
+    #[test]
+    fn results_and_errors_replace_each_other() {
+        let mut io = TextIo { input: "in".into(), input_syntax: Some("json"), output_syntax: Some("json"), ..TextIo::default() };
+        io.apply(Ok("out".into()));
+        assert_eq!((io.output.as_str(), io.error.as_str()), ("out", ""));
+        io.apply(Err("bad".into()));
+        assert_eq!((io.output.as_str(), io.error.as_str()), ("", "bad"));
+        io.apply(Ok("again".into()));
+        assert_eq!((io.output.as_str(), io.error.as_str()), ("again", ""));
+        // Clearing empties the text but keeps the highlighting.
+        io.error = "x".into();
+        io.clear();
+        assert!(io.input.is_empty() && io.output.is_empty() && io.error.is_empty());
+        assert_eq!((io.input_syntax, io.output_syntax), (Some("json"), Some("json")));
+    }
+}

@@ -277,6 +277,19 @@ mod tests {
     }
 
     #[test]
+    fn long_lines_are_cut_around_the_error() {
+        // The error is at the `x`, column 122 of one long line.
+        let input = format!("[{}x]", "1, ".repeat(40));
+        let snippet = caret_snippet(&input, &parse(&input).unwrap_err()).unwrap();
+        let (line, caret) = snippet.split_once('\n').unwrap();
+        assert!(line.starts_with('…') && line.ends_with("x]"), "{snippet}");
+        assert_eq!(line.chars().nth(caret.chars().count() - 1), Some('x'), "{snippet}");
+        // An error past the last line has no snippet (and no panic).
+        let eof = parse("{\n").unwrap_err();
+        assert_eq!(caret_snippet("{\n", &eof), None);
+    }
+
+    #[test]
     fn errors_point_at_the_position() {
         let input = "{\n  \"a\": 1\n  \"b\": 2\n}";
         let error = parse(input).unwrap_err();

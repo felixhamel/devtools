@@ -30,6 +30,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn handles_limits_and_spacing() {
+        // 128 bits is the limit: 32 hex digits fit, 33 do not.
+        assert!(number_bases(&format!("0x{}", "F".repeat(32))).unwrap().starts_with(&format!("Decimal: {}\n", u128::MAX)));
+        assert!(number_bases(&format!("0x1{}", "0".repeat(32))).is_err());
+        // Zero has no sign; spaces are ignored like underscores.
+        assert!(number_bases("-0").unwrap().starts_with("Decimal: 0\n"));
+        assert!(number_bases(" 1 000 ").unwrap().starts_with("Decimal: 1000\n"));
+        for bad in ["", "+5", "0b102", "0o8", "1.5", "0x-1"] { assert!(number_bases(bad).is_err(), "{bad}"); }
+    }
+
+    #[test]
     fn converts_prefixes_signs_and_separators() {
         assert_eq!(number_bases("255").unwrap(), "Decimal: 255\nHexadecimal: FF\nOctal: 377\nBinary: 11111111");
         assert_eq!(number_bases("0XfF").unwrap(), number_bases("0b1111_1111").unwrap());

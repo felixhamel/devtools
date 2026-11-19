@@ -148,4 +148,25 @@ mod tests {
             Property::Pair { key: "Group 1 (user)", value: "\"ada\"", indent: true },
         ]);
     }
+
+    #[test]
+    fn parses_report_edge_cases() {
+        assert_eq!(parse_properties(""), []);
+        // Split at the first ": " only; Windows line breaks and trailing spaces are ignored.
+        assert_eq!(parse_properties("Error: line 2: bad  \r\nNext: 1"), [
+            Property::Pair { key: "Error", value: "line 2: bad", indent: false },
+            Property::Pair { key: "Next", value: "1", indent: false },
+        ]);
+        // A heading with nothing indented under it stays a heading.
+        assert_eq!(parse_properties("Tags:\nNext: 1"), [Property::Heading("Tags"), Property::Pair { key: "Next", value: "1", indent: false }]);
+        // An indented line ending with ":" is text, not a nested heading; "a:b" has no key.
+        assert_eq!(parse_properties("Group:\n  Sub:\n  x\nurl:http"), [
+            Property::Heading("Group"),
+            Property::Text { value: "Sub:", indent: true },
+            Property::Text { value: "x", indent: true },
+            Property::Text { value: "url:http", indent: false },
+        ]);
+        // Blank lines with spaces are gaps too.
+        assert_eq!(parse_properties("a: 1\n   \nb: 2")[1], Property::Gap);
+    }
 }

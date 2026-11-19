@@ -128,6 +128,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn options_combine() {
+        // Unique keeps the first occurrence, in input order; ignoring case keeps the first spelling.
+        assert_eq!(process("b\na\nb\nc\na", Options { unique: true, ..Default::default() }), "b\na\nc");
+        assert_eq!(process("Apple\napple\nAPPLE", Options { unique: true, ignore_case: true, ..Default::default() }), "Apple");
+        // Descending only applies when sorting; trimming works alone.
+        assert_eq!(process("b\na", Options { descending: true, ..Default::default() }), "b\na");
+        assert_eq!(process(" b \n a", Options { trim: true, ..Default::default() }), "b\na");
+        // Windows line breaks are split too; an empty line sorts first.
+        assert_eq!(process("b\r\na\r\n\r\nc", Options { sort: true, ..Default::default() }), "\na\nb\nc");
+        // Sorting without case is stable: lines equal but for case keep their order.
+        assert_eq!(process("b\nB\na", Options { sort: true, ignore_case: true, ..Default::default() }), "a\nb\nB");
+        assert_eq!(process("", Options { sort: true, unique: true, ..Default::default() }), "");
+    }
+
+    #[test]
     fn sorts_and_dedupes() {
         let input = "b\n a\nB\na\nc";
         let opts = Options { sort: true, unique: true, ..Default::default() };

@@ -388,6 +388,20 @@ mod tests {
     }
 
     #[test]
+    fn relative_time_and_unit_boundaries() {
+        assert_eq!(relative(TimeDelta::seconds(10)), "in 10 seconds");
+        assert_eq!(relative(TimeDelta::seconds(60)), "in 1 minute");
+        assert_eq!(relative(TimeDelta::days(30)), "in 1 month");
+        assert_eq!(relative(TimeDelta::days(-365)), "1 year ago");
+        // 11 digits are seconds, 12 are milliseconds, in either direction.
+        assert_eq!(Unit::detect(99_999_999_999), Unit::Seconds);
+        assert_eq!(Unit::detect(100_000_000_000), Unit::Millis);
+        assert_eq!(Unit::detect(-1_700_000_000_000), Unit::Millis);
+        assert_eq!(parse_input("1_700_000_000", Unit::Auto, Zone::Utc).unwrap().0, utc("2023-11-14T22:13:20Z"));
+        assert_eq!(parse_input(&"9".repeat(38), Unit::Auto, Zone::Utc).unwrap_err(), "Timestamp out of range");
+    }
+
+    #[test]
     fn reports_and_relative_time() {
         let instant = utc("2023-11-14T22:13:20Z");
         let out = report(instant, Zone::Named(Tz::America__Toronto), Some(Unit::Seconds), instant + TimeDelta::days(3));

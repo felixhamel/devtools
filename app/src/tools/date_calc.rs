@@ -425,6 +425,18 @@ mod tests {
     }
 
     #[test]
+    fn handles_leap_days_and_timestamps() {
+        // 29 Feb + 1 year is 28 Feb: exactly one year.
+        assert!(difference(at("2024-02-29"), at("2025-02-28")).contains("Difference: 1 year\n"));
+        assert!(difference(at("2024-02-28"), at("2024-03-01")).contains("Days: 2\n"));
+        let monday = NaiveDate::from_ymd_opt(2026, 11, 16).unwrap();
+        assert_eq!(business_days(monday, monday), 0);
+        let now = at("2026-11-19 14:30");
+        assert!(matches!(parse("1700000000", now), Ok(When::Instant(_))));
+        assert_eq!(with_date("2026-01-01T08:00", NaiveDate::from_ymd_opt(2026, 3, 4).unwrap()), "2026-03-04 08:00");
+    }
+
+    #[test]
     fn counts_business_days() {
         let date = |d: u32| NaiveDate::from_ymd_opt(2026, 11, d).unwrap();
         // Mon 16 Nov to Mon 23 Nov 2026: one week.

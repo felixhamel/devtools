@@ -160,6 +160,16 @@ fn decode(image: &Rgba) -> Result<String, String> {
 mod tests {
     use super::*;
     #[test]
+    fn sizes_unicode_and_limits() {
+        // A short text fits the smallest code (21 modules) plus the quiet zone, at SCALE px per module.
+        assert_eq!(encode("a").unwrap().width, (21 + 2 * QUIET) * SCALE);
+        let text = "Café 👋 — ü";
+        assert_eq!(decode(&encode(text).unwrap()).unwrap(), text);
+        // A QR code holds at most about 3 KB.
+        assert!(encode(&"x".repeat(3_000)).is_err());
+    }
+
+    #[test]
     fn round_trip() {
         let text = "https://example.com/?q=devutils&n=42";
         let image = encode(text).unwrap();

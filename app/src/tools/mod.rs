@@ -303,3 +303,82 @@ pub fn registry() -> Vec<Box<dyn Tool>> {
         Box::new(markdown::Markdown::default()),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Draws `tool` for two frames (work deferred to the next frame happens in
+    /// the second) in a headless egui context the size of the window.
+    fn draw(ctx: &egui::Context, tool: &mut dyn Tool) {
+        for _ in 0..2 {
+            let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100.0, 720.0))), ..Default::default() };
+            let _ = ctx.run(input, |ctx| { egui::CentralPanel::default().show(ctx, |ui| tool.ui(ui)); });
+        }
+    }
+
+    #[test]
+    fn names_are_unique_and_every_category_is_used() {
+        let tools = registry();
+        let mut names = std::collections::HashSet::new();
+        for tool in &tools {
+            assert!(!tool.name().is_empty() && !tool.icon().is_empty(), "{}", tool.name());
+            // Names identify tools in saved state, ⇄ requests and detection.
+            assert!(names.insert(tool.name()), "two tools are named {}", tool.name());
+        }
+        for category in Category::ALL {
+            assert!(tools.iter().any(|t| t.category() == category), "no tool in {}", category.label());
+        }
+    }
+
+    #[test]
+    fn every_tool_draws_its_sample() {
+        let ctx = egui::Context::default();
+        for mut tool in registry() {
+            tool.load_sample();
+            draw(&ctx, tool.as_mut());
+        }
+    }
+
+    #[test]
+    fn no_tool_panics_on_odd_input() {
+        // A panic aborts the release app, so every tool must survive any paste.
+        let long = "a".repeat(20_000);
+        let odd = ["", " ", "\n\n\t", "\u{0}", "é", "🙂‍↔️", "\u{feff}x", "{", "[", "}{", "\"", "\\", "\\x", "\\u{", "%", "%zz", "&#", "&#xFFFFFFFF;",
+            "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----", "eyJ.eyJ.x", "arn:", "arn:aws:s3:::", "H4sI", "cron(", "rate(", "at(",
+            "0 0 * * *", "* * * * * * * *", "99999999999999999999999999", "-1", "1e309", "NaN", "0x", "#", "#ffff", "rgb(", "10.0.0.0/33", "::/0",
+            "a: [1,\nb", "key = ", "- -\n- - -", "<", "<a><b></a>", "/*", "SELECT", "\u{202e}abc", long.as_str()];
+        let ctx = egui::Context::default();
+        for mut tool in registry().into_iter().filter(|t| t.accepts_input()) {
+            for text in odd {
+                tool.set_input(text);
+                draw(&ctx, tool.as_mut());
+            }
+        }
+    }
+
+    #[test]
+    fn text_tools_run_the_selected_action() {
+        let actions: Vec<(&'static str, Transform)> = vec![("Upper", |s| Ok(s.to_uppercase())), ("Fail", |_| Err("nope".into()))];
+        let mut tool = TextTool::new("Test", icon::TEXT_AA, Category::Text, actions).sample("abc").key_value_output();
+        tool.load_sample();
+        assert_eq!((tool.io.output.as_str(), tool.io.error.as_str()), ("ABC", ""));
+        assert_eq!(tool.io.output_syntax, Some(ui::KEY_VALUE));
+        // The selected action runs again on new input; an error replaces the output.
+        tool.io.active = 1;
+        tool.set_input("x");
+        assert_eq!((tool.io.output.as_str(), tool.io.error.as_str()), ("", "nope"));
+        // Blank input clears both.
+        tool.set_input("  \n");
+        assert_eq!((tool.io.output.as_str(), tool.io.error.as_str()), ("", ""));
+        // The sample always runs the first action.
+        tool.load_sample();
+        assert_eq!((tool.io.active, tool.io.output.as_str()), (0, "ABC"));
+    }
+
+    #[test]
+    fn syntax_applies_to_both_panes() {
+        let tool = TextTool::new("Test", icon::TEXT_AA, Category::Code, vec![("Same", |s| Ok(s.to_owned()))]).syntax("json");
+        assert_eq!((tool.io.input_syntax, tool.output_syntax.as_slice()), (Some("json"), [Some("json")].as_slice()));
+    }
+}

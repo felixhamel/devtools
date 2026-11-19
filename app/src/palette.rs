@@ -191,6 +191,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fuzzy_matching_edge_cases() {
+        // Case does not matter, accents included.
+        assert_eq!(fuzzy_score("JSON Format/Validate", "JSON"), fuzzy_score("JSON Format/Validate", "json"));
+        assert!(fuzzy_score("Éditeur Markdown", "ÉDI").is_some());
+        // After "/" is a word start too.
+        assert!(fuzzy_score("JSON Format/Validate", "valid").unwrap() > fuzzy_score("JSON Format/Validate", "alid").unwrap());
+        // An empty query matches everything; scattered letters must keep their order.
+        assert_eq!(fuzzy_score("Hash Generator", ""), Some(1500));
+        assert_eq!(fuzzy_score("Unix Time", "tu"), None);
+        // Earlier substrings rank higher.
+        assert!(fuzzy_score("Code Compare", "co").unwrap() > fuzzy_score("Image Compare", "co").unwrap());
+    }
+
+    #[test]
     fn fuzzy_matching_prefers_substrings_at_word_starts() {
         assert!(fuzzy_score("JSON Format/Validate", "json").unwrap() > fuzzy_score("JSON Format/Validate", "form").unwrap());
         assert!(fuzzy_score("Image Compare", "comp").unwrap() > fuzzy_score("Image Compare", "mgcp").unwrap());

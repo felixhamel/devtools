@@ -59,6 +59,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn labels_files_and_cues() {
+        for (label, value) in LANGUAGES { assert_eq!(language_label(value), label); }
+        assert_eq!(language_label("cobol"), "Plain text");
+        assert_eq!(language_of_file("Makefile"), None);
+        assert_eq!(language_of_file("deploy.YML"), Some("yaml"));
+        assert_eq!(language_of_file("icon.svg"), Some("xml"));
+        assert_eq!(sniff_language("#!/usr/bin/env bash\necho hi"), "sh");
+        assert_eq!(sniff_language("<?xml version=\"1.0\"?><a/>"), "xml");
+        assert_eq!(sniff_language("  <div>hi</div>"), "html");
+        assert_eq!(sniff_language("def area(r):\n    return r * r"), "py");
+        assert_eq!(sniff_language("package main\nfunc main() {}"), "go");
+        // Broken JSON is not taken for JSON.
+        assert_eq!(sniff_language("{\"a\": }"), "");
+    }
+
+    #[test]
     fn detects_languages() {
         assert_eq!(language_of_file("src/App.tsx"), Some("js"));
         assert_eq!(language_of_file("Cargo.lock"), None);

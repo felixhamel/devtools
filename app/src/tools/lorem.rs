@@ -211,6 +211,19 @@ mod tests {
     }
 
     #[test]
+    fn options_and_seeds() {
+        let mut rng = Rng::seeded(3);
+        // One classic sentence is exactly the opening; <p> only wraps paragraphs.
+        let one = Options { unit: Unit::Sentences, counts: [0, 1, 0], html: true, ..Options::default() };
+        assert_eq!(generate(&one, &mut rng), format!("{OPENING}."));
+        let words = Options { unit: Unit::Words, counts: [0, 0, 3], classic_start: false, ..Options::default() };
+        let text = generate(&words, &mut rng);
+        assert!(text.split(' ').count() == 3 && text.split(' ').all(|w| WORDS.contains(&w)), "{text}");
+        // The same seed gives the same text.
+        assert_eq!(generate(&Options::default(), &mut Rng::seeded(9)), generate(&Options::default(), &mut Rng::seeded(9)));
+    }
+
+    #[test]
     fn sentences_are_well_formed() {
         let mut rng = Rng::seeded(7);
         for _ in 0..200 {

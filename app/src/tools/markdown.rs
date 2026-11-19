@@ -133,6 +133,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn escapes_text_and_keeps_raw_html() {
+        assert_eq!(to_html("a < b & c"), "<p>a &lt; b &amp; c</p>\n");
+        assert_eq!(to_html("<kbd>⌘K</kbd>"), "<p><kbd>⌘K</kbd></p>\n");
+        let task = to_html("- [ ] todo");
+        assert!(task.contains("<input disabled=\"\" type=\"checkbox\"/>") && task.contains("todo</li>"), "{task}");
+    }
+
+    #[test]
+    fn the_tool_renders_what_it_receives() {
+        let mut tool = Markdown::default();
+        tool.set_input("# Hi");
+        assert_eq!(tool.io.output, "<h1>Hi</h1>\n");
+        tool.load_sample();
+        assert!(tool.io.output.starts_with("<h1>Release notes</h1>"), "{}", tool.io.output);
+    }
+
+    #[test]
     fn renders_html_with_extensions() {
         let html = to_html(SAMPLE);
         for part in ["<h1>Release notes</h1>", "<strong>native</strong>", "<del>slow</del>", "<input disabled=\"\" type=\"checkbox\" checked=\"\"/>",

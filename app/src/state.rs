@@ -74,6 +74,14 @@ mod tests {
     }
 
     #[test]
+    fn a_damaged_state_file_starts_fresh() {
+        let mut storage = MemoryStorage::default();
+        eframe::Storage::set_string(&mut storage, eframe::APP_KEY, "not RON at all".into());
+        let saved = Saved::load(Some(&storage));
+        assert_eq!((saved.last_tool, saved.recent.len(), saved.favorites.len()), (None, 0, 0));
+    }
+
+    #[test]
     fn maps_names_to_tools_and_back() {
         let tools = crate::tools::registry();
         let positions = indices(&tools, &["Hash Generator".into(), "No Such Tool".into(), "JWT Debugger".into()]);

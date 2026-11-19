@@ -23,6 +23,17 @@ fn hashes(input: &str) -> Result<String, String> {
 mod tests {
     use super::*;
     #[test]
+    fn hashes_empty_and_unicode_input() {
+        let empty = hashes("").unwrap();
+        assert!(empty.contains("MD5: d41d8cd98f00b204e9800998ecf8427e"), "{empty}");
+        assert!(empty.contains("SHA-1: da39a3ee5e6b4b0d3255bfef95601890afd80709"), "{empty}");
+        assert!(empty.contains("SHA-256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"), "{empty}");
+        // The exact bytes count: a composed and a decomposed "é" differ, and so does a final line break.
+        assert_ne!(hashes("\u{e9}").unwrap(), hashes("e\u{301}").unwrap());
+        assert_ne!(hashes("abc").unwrap(), hashes("abc\n").unwrap());
+    }
+
+    #[test]
     fn hashes_known_vectors() {
         let out = hashes("abc").unwrap();
         assert!(out.contains("MD5: 900150983cd24fb0d6963f7d28e17f72"));

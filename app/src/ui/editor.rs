@@ -157,3 +157,55 @@ pub fn preview_frame(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
         });
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Runs `check` with a `Ui` from a headless frame.
+    fn with_ui(check: impl FnOnce(&mut egui::Ui)) {
+        let ctx = egui::Context::default();
+        let mut check = Some(check);
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| if let Some(check) = check.take() { check(ui) });
+        });
+    }
+
+    /// The parts of `job` drawn with `background`.
+    fn parts_on(job: &egui::text::LayoutJob, background: egui::Color32) -> Vec<String> {
+        job.sections.iter().filter(|s| s.format.background == background).map(|s| job.text[s.byte_range.clone()].to_owned()).collect()
+    }
+
+    #[test]
+    fn ranges_that_do_not_fit_are_skipped() {
+        // "é" takes bytes 1..3.
+        let text = "héllo world";
+        assert_eq!(fitting(text, &(0..1), 0), Some("h"));
+        assert_eq!(fitting(text, &(1..2), 0), None, "inside a character");
+        assert_eq!(fitting(text, &(3..50), 0), None, "past the end");
+        assert_eq!(fitting(text, &(0..1), 2), None, "before the previous range");
+        with_ui(|ui| {
+            // Stale ranges (the text changed since they were found) never lose text or panic.
+            let job = ranges_job(ui, text, &[0..1, 1..2, 7..12, 3..5, 40..41]);
+            assert_eq!(job.text, text);
+            assert_eq!(parts_on(&job, theme::MATCH_BG), ["h", "world"]);
+        });
+    }
+
+    #[test]
+    fn spans_color_their_part_and_mute_the_rest() {
+        with_ui(|ui| {
+            let job = spans_job(ui, "aaa.bbb.ccc", &[(0..3, theme::ROSE), (4..7, theme::VIOLET), (6..20, theme::CYAN)]);
+            assert_eq!(job.text, "aaa.bbb.ccc");
+            let colored: Vec<(String, egui::Color32)> = job.sections.iter().map(|s| (job.text[s.byte_range.clone()].to_owned(), s.format.color)).filter(|(t, _)| !t.is_empty()).collect();
+            assert_eq!(colored, [("aaa".to_owned(), theme::ROSE), (".".to_owned(), MUTED), ("bbb".to_owned(), theme::VIOLET), (".ccc".to_owned(), MUTED)]);
+        });
+    }
+
+    #[test]
+    fn counts_read_naturally() {
+        assert_eq!(plural(1, "line"), "line");
+        assert_eq!(plural(0, "char"), "chars");
+        assert_eq!(plural(2, "line"), "lines");
+    }
+}

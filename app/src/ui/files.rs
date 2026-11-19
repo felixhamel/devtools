@@ -58,5 +58,22 @@ mod tests {
         // Just under 1 MB rounds up to the next unit instead of showing "1024.0 KB".
         assert_eq!(human_size(1_048_575), "1.0 MB");
         assert_eq!(human_size(5 * 1024 * 1024), "5.0 MB");
+        assert_eq!(human_size(0), "0 B");
+        assert_eq!(human_size(1023), "1023 B");
+        assert_eq!(human_size(1024), "1.0 KB");
+        assert_eq!(human_size(3 * 1024 * 1024 * 1024), "3.0 GB");
+    }
+
+    #[test]
+    fn reads_files_by_path() {
+        let path = std::env::temp_dir().join(format!("devutils-test-{}.txt", std::process::id()));
+        std::fs::write(&path, "héllo").unwrap();
+        let read = read_path(&path);
+        std::fs::remove_file(&path).unwrap();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(read, Ok((name, "héllo".as_bytes().to_vec())));
+        // A missing file names the path in the error.
+        let missing = std::env::temp_dir().join("devutils-missing-file.txt");
+        assert!(read_path(&missing).unwrap_err().starts_with(&format!("Cannot read {}", missing.display())));
     }
 }
