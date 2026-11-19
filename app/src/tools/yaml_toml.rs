@@ -1,7 +1,9 @@
 //! JSON ↔ YAML ↔ TOML: reads any of the three (the format is detected) and
 //! writes the one chosen. YAML anchors and merge keys (`<<: *defaults`) are
 //! expanded, and a YAML stream of several documents becomes an array.
+use std::sync::LazyLock;
 use eframe::egui;
+use regex::Regex;
 use serde_json::Value;
 use super::{Category, Tool};
 use crate::ui::{self, icon, theme, TextIo};
@@ -52,7 +54,27 @@ impl Format {
 /// `false` (in any case) are booleans, so `yes`, `on` or the country code `NO`
 /// stay text instead of silently becoming `true` or `false`.
 pub(super) fn yaml_documents(text: &str) -> Result<Vec<Value>, serde_saphyr::Error> {
-    serde_saphyr::from_multiple_with_options(text, serde_saphyr::options! { strict_booleans: true })
+    // `.inf` and `.nan` become strings as written, as they do from TOML: JSON cannot hold them.
+    let options = serde_saphyr::options! {
+        strict_booleans: true,
+        non_finite_float_policy: serde_saphyr::options::NonFiniteFloatPolicy::AsString,
+    };
+    serde_saphyr::from_multiple_with_options(text, options)
+}
+
+/// Whether the first line that is not blank or a comment is a TOML table
+/// header (`[server]`, `[[bin]]`, `[tool.poetry]`) or a `key = value`.
+fn looks_like_toml(text: &str) -> bool {
+    static START: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^(\[\[?\s*[\w-]+(\s*\.\s*[\w"'-]+)*\s*\]\]?|[\w"'.-]+\s*=)"#).expect("valid pattern"));
+    text.lines().map(str::trim).find(|line| !line.is_empty() && !line.starts_with('#')).is_some_and(|line| START.is_match(line))
+}
+
+/// A TOML error in one line: where it is (from its byte span) and what is wrong.
+fn toml_error(text: &str, error: &toml::de::Error) -> String {
+    let before = error.span().and_then(|span| text.get(..span.start)).unwrap_or_default();
+    let line = before.matches('\n').count() + 1;
+    let column = before.rsplit('\n').next().unwrap_or_default().chars().count() + 1;
+    format!("Invalid TOML: line {line} column {column}: {}", error.message().trim().replace('\n', "; "))
 }
 
 /// Reads `text` as JSON if it is valid JSON, as TOML if it is valid TOML, and
@@ -62,13 +84,17 @@ fn read(text: &str) -> Result<(Format, Value), String> {
         Ok(value) => return Ok((Format::Json, value)),
         Err(e) => e,
     };
-    if let Ok(table) = toml::from_str::<toml::Table>(text) {
-        return Ok((Format::Toml, from_toml(toml::Value::Table(table))));
-    }
-    // Text that starts like JSON (and is not a TOML `[table]`) is meant as JSON:
-    // YAML would accept some broken JSON, such as `{"a": }`, and hide the mistake.
+    let toml_mistake = match toml::from_str::<toml::Table>(text) {
+        Ok(table) => return Ok((Format::Toml, from_toml(toml::Value::Table(table)))),
+        Err(e) => e,
+    };
+    // Broken TOML could still pass as YAML (one long string): say what is wrong instead.
+    if looks_like_toml(text) { return Err(toml_error(text, &toml_mistake)); }
+    // Text that starts like JSON is meant as JSON: YAML would accept some
+    // broken JSON, such as `{"a": }`, and hide the mistake.
     if text.trim_start().starts_with(['{', '[']) { return Err(format!("Invalid JSON: {json_error}")); }
     match yaml_documents(text) {
+        Ok(documents) if documents.is_empty() => Ok((Format::Yaml, Value::Null)),
         Ok(mut documents) if documents.len() == 1 => Ok((Format::Yaml, documents.remove(0))),
         Ok(documents) => Ok((Format::Yaml, Value::Array(documents))),
         // The first line says where and what ("line 2 column 4: …"); the snippet
@@ -285,6 +311,20 @@ mod tests {
         assert_eq!(tool.source, Some(Format::Yaml));
         tool.set_input("  ");
         assert!(tool.io.error.is_empty() && tool.io.output.is_empty() && tool.source.is_none());
+    }
+
+    #[test]
+    fn fixes_from_the_review() {
+        // Text that looks like TOML gets the TOML error, wherever the mistake is.
+        let missing_quotes = read("[server]\nhost = localhost").unwrap_err();
+        assert!(missing_quotes.starts_with("Invalid TOML: line 2"), "{missing_quotes}");
+        assert!(read("# config\n[server]\nhost = localhost").unwrap_err().starts_with("Invalid TOML: line 3"));
+        assert!(read("title = \"x\"\n[owner]\nname = Ada").unwrap_err().starts_with("Invalid TOML: line 3"));
+        assert!(read("version = 1.2.3").unwrap_err().starts_with("Invalid TOML"));
+        // YAML's infinities and NaN become strings as written, as TOML's do.
+        assert_eq!(read("x: .inf\ny: -.inf\nz: .nan").unwrap().1, json!({"x": ".inf", "y": "-.inf", "z": ".nan"}));
+        // An empty YAML document is null.
+        assert_eq!(read("---").unwrap().1, Value::Null);
     }
 
     #[test]

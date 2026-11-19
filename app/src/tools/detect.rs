@@ -19,8 +19,8 @@ fn re(pattern: &str) -> Regex { Regex::new(pattern).expect("detection patterns a
 static JWT: LazyLock<Regex> = LazyLock::new(|| re(r"^eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$"));
 /// An Amazon Resource Name: `arn:partition:service:`…
 static ARN: LazyLock<Regex> = LazyLock::new(|| re(r"^arn:aws[a-z-]*:[a-z0-9-]+:"));
-/// The first line of a YAML document: `---`, a list item, or a `key:`.
-static YAML_START: LazyLock<Regex> = LazyLock::new(|| re(r"^(---\s*$|- |[A-Za-z_][\w.-]*:(\s|$))"));
+/// A top-level line of YAML data: `---` or `...`, a list item, or a `key:` (one word).
+static YAML_LINE: LazyLock<Regex> = LazyLock::new(|| re(r"^((---|\.\.\.)\s*$|- |[A-Za-z_][\w.-]*:(\s|$))"));
 /// With or without hyphens, optionally in braces or as a `urn:uuid:` URN.
 static UUID: LazyLock<Regex> = LazyLock::new(|| re(r"(?i)^(urn:uuid:)?\{?[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}\}?$"));
 /// 26 Crockford Base32 characters; the first is at most 7 so the timestamp fits in 48 bits.
@@ -64,7 +64,11 @@ pub fn detect(text: &str) -> Option<Detected> {
     if ARN.is_match(t) { return found("AWS ARN Parser", "an ARN"); }
     if t.contains("-----BEGIN CERTIFICATE-----") { return found("Certificate Decoder (X.509)", "a certificate"); }
     if t.starts_with("data:image/") { return found("Base64 Image Encode/Decode", "an image data URI"); }
-    if t.starts_with('{') && t.contains("\"awslogs\"") { return found("CloudWatch Logs Decoder", "a CloudWatch Logs event"); }
+    // A Lambda event from a CloudWatch Logs subscription has `awslogs.data`
+    // (other JSON can mention the awslogs log driver).
+    if t.starts_with('{') && t.contains("\"awslogs\"") && serde_json::from_str::<serde_json::Value>(t).is_ok_and(|v| v["awslogs"]["data"].is_string()) {
+        return found("CloudWatch Logs Decoder", "a CloudWatch Logs event");
+    }
     if (t.starts_with('{') || t.starts_with('[')) && serde_json::from_str::<serde_json::Value>(t).is_ok() { return found("JSON Format/Validate", "JSON"); }
     // "H4sI" is the gzip header in Base64: CloudWatch Logs subscription data.
     if t.starts_with("H4sI") && BASE64.is_match(t) { return found("CloudWatch Logs Decoder", "gzip-compressed Base64"); }
@@ -77,7 +81,7 @@ pub fn detect(text: &str) -> Option<Detected> {
     if TIMESTAMP.is_match(t) { return found("Unix Time Converter", "a timestamp"); }
     if DATE.is_match(t) { return found("Unix Time Converter", "a date"); }
     if COLOR.is_match(t) { return found("Color Converter", "a color"); }
-    if EVENTBRIDGE.is_match(t) { return found("Cron Job Parser", "an EventBridge schedule"); }
+    if EVENTBRIDGE.is_match(t) || super::cron::is_bare_eventbridge(t) { return found("Cron Job Parser", "an EventBridge schedule"); }
     // 5 to 7 fields with at least one `*` or `/` (so that a five-word sentence
     // is not taken), and croner must accept it.
     let fields: Vec<&str> = t.split_whitespace().collect();
@@ -101,12 +105,15 @@ pub fn detect(text: &str) -> Option<Detected> {
     None
 }
 
-/// Whether `text` is a YAML mapping or list of at least two lines (one line
-/// such as "Note: hi" is left alone).
+/// Whether `text` is YAML data: at least two lines, every top-level line a
+/// `key:`, a list item or a document marker, and every document a mapping or
+/// a list of mappings or lists. Prose ("Caused by: …"), a Markdown list of
+/// words or Markdown with front matter is left alone.
 fn is_yaml(text: &str) -> bool {
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#')).collect();
-    lines.len() >= 2 && YAML_START.is_match(lines[0])
-        && super::yaml_toml::yaml_documents(text).is_ok_and(|docs| docs.first().is_some_and(|d| d.is_object() || d.is_array()))
+    let structured = |v: &serde_json::Value| v.is_object() || v.as_array().is_some_and(|items| items.iter().any(|i| i.is_object() || i.is_array()));
+    lines.len() >= 2 && lines.iter().filter(|l| !l.starts_with(char::is_whitespace)).all(|l| YAML_LINE.is_match(l))
+        && super::yaml_toml::yaml_documents(text).is_ok_and(|docs| !docs.is_empty() && docs.iter().all(structured))
 }
 
 /// Whether `text` looks like a table: at least 3 lines that all have the same
@@ -168,7 +175,7 @@ mod tests {
             ("{\"awslogs\": {\"data\": \"H4sIAAAA\"}}", "CloudWatch Logs Decoder"),
             ("H4sIAAAAAAAC/8tIzcnJBwCGphA2BQAAAA==", "CloudWatch Logs Decoder"),
             ("apiVersion: v1\nkind: Pod\nmetadata:\n  name: web", "JSON \u{2194} YAML \u{2194} TOML"),
-            ("# deps\n- serde\n- egui", "JSON \u{2194} YAML \u{2194} TOML"),
+            ("# deps\n- name: serde\n- name: egui", "JSON \u{2194} YAML \u{2194} TOML"),
             ("[server]\nhost = \"localhost\"\nport = 8080", "JSON \u{2194} YAML \u{2194} TOML"),
             ("id,name\n1,Ada\n2,Grace", "JSON \u{2194} CSV"),
             ("id;name;city\n1;Ada;London\n2;Grace;\"New York\"", "JSON \u{2194} CSV"),
@@ -177,6 +184,22 @@ mod tests {
         for (text, expected) in cases {
             assert_eq!(tool(text), Some(expected), "{text}");
         }
+    }
+
+    #[test]
+    fn fixes_from_the_review() {
+        // JSON that merely mentions the awslogs log driver is JSON, not a CloudWatch event.
+        let task = r#"{"family":"web","containerDefinitions":[{"logConfiguration":{"logDriver":"awslogs","options":{"awslogs-group":"/ecs/web"}}}]}"#;
+        assert_eq!(tool(task), Some("JSON Format/Validate"));
+        // EventBridge cron without its cron(…) wrapper, as the AWS console takes it.
+        for text in ["0 12 ? * MON-FRI *", "30 8 ? * 1 *", "0 12 * * ? *"] {
+            assert_eq!(tool(text), Some("Cron Job Parser"), "{text}");
+        }
+        // Prose with colons, Markdown lists and front matter are not YAML data.
+        for text in ["Error: failed to parse config\nCaused by: missing field", "- buy milk\n- call mom", "---\ntitle: Notes\n---\n# Notes\nSome text."] {
+            assert_eq!(tool(text), None, "{text:?}");
+        }
+        assert_eq!(tool("- name: serde\n  version: 1\n- name: egui"), Some("JSON \u{2194} YAML \u{2194} TOML"));
     }
 
     #[test]

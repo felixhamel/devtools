@@ -11,6 +11,11 @@ const RUN_COUNT: usize = 5;
 /// Shown when an EventBridge `cron(…)` does not have its 6 fields.
 const EVENTBRIDGE_FIELDS: &str = "An EventBridge cron has 6 fields: minutes hours day-of-month month day-of-week year, e.g. cron(0 12 ? * MON-FRI *)";
 
+/// Month names, for ranges that wrap around the year (`NOV-FEB`).
+const MONTHS: [&str; 12] = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+/// Day names in EventBridge's order (1 is Sunday), for ranges that wrap around the week (`FRI-MON`).
+const WEEKDAYS: [&str; 7] = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+
 /// Shown when a `rate(…)` cannot be read.
 const RATE_FORMAT: &str = "A rate is rate(value unit), e.g. rate(5 minutes), rate(1 hour) or rate(7 days)";
 
@@ -28,11 +33,16 @@ fn report(src: &str, now: DateTime<Utc>) -> Result<String, String> {
     if let Some(fields) = wrapped(t, "cron") { return eventbridge_report(fields, now); }
     if let Some(rate) = wrapped(t, "rate") { return rate_report(rate); }
     if let Some(at) = wrapped(t, "at") { return at_report(at, now); }
-    // Without "cron(…)": a `?` where standard cron has its hour or month can
-    // only be EventBridge's order (day of month or day of week there).
-    let fields: Vec<&str> = t.split_whitespace().collect();
-    if fields.len() == 6 && (fields[2] == "?" || fields[4] == "?") { return eventbridge_report(t, now); }
+    if is_bare_eventbridge(t) { return eventbridge_report(t, now); }
     cron_report(t, now.with_timezone(&Local))
+}
+
+/// Whether `text` is an EventBridge cron without its `cron(…)` wrapper, as the
+/// AWS console takes it: 6 fields with a `?` where standard cron has its hour
+/// or month, which only EventBridge's order allows (day of month or of week there).
+pub(super) fn is_bare_eventbridge(text: &str) -> bool {
+    let fields: Vec<&str> = text.split_whitespace().collect();
+    fields.len() == 6 && (fields[2] == "?" || fields[4] == "?")
 }
 
 /// The text inside `name(…)`, e.g. `wrapped("rate(5 minutes)", "rate")` is `Some("5 minutes")`.
@@ -58,14 +68,53 @@ fn eventbridge_report(expression: &str, now: DateTime<Utc>) -> Result<String, St
     if (*day == "?") == (*weekday == "?") {
         return Err("EventBridge needs ? in exactly one of day-of-month and day-of-week, e.g. cron(0 12 ? * MON-FRI *)".into());
     }
+    check_eventbridge_limits(&fields, weekday, year)?;
+    // `L` alone in day-of-week is the last day of the week, Saturday (croner ignores it there).
+    let weekday = weekday.split(',').map(|part| if part == "L" { "7" } else { part }).collect::<Vec<_>>().join(",");
+    let pattern = [
+        unwrap_ranges(minutes, 0, 59, &[]), unwrap_ranges(hours, 0, 23, &[]), unwrap_ranges(day, 1, 31, &[]),
+        unwrap_ranges(month, 1, 12, &MONTHS), unwrap_ranges(&weekday, 1, 7, &WEEKDAYS), (*year).to_owned(),
+    ].join(" ");
     // croner reads 7 fields with seconds first. Its Quartz mode numbers the days
     // as EventBridge does, and EventBridge writes steps as `0/15` (from 0, every 15).
     let cron = croner::parser::CronParser::builder().alternative_weekdays(true).sloppy_ranges(true).build()
-        .parse(&format!("0 {minutes} {hours} {day} {month} {weekday} {year}")).map_err(|e| e.to_string())?;
+        .parse(&format!("0 {pattern}")).map_err(|e| e.to_string())?;
     let runs: Vec<String> = cron.iter_after(now).take(RUN_COUNT)
         .map(|t| format!("  {} UTC ({} local)", t.format("%a %Y-%m-%d %H:%M"), t.with_timezone(&Local).format("%a %H:%M"))).collect();
     let next = if runs.is_empty() { "Next runs: none (the schedule has no date after today)".to_owned() } else { format!("Next {} runs (UTC):\n{}", runs.len(), runs.join("\n")) };
     Ok(format!("Syntax: EventBridge cron (times in UTC)\nDescription: {}\n\n{next}", cron.describe()))
+}
+
+/// What EventBridge refuses although croner would take it: a step without a
+/// start (`/10`), `/` or several `#` in day-of-week, years outside 1970-2199.
+fn check_eventbridge_limits(fields: &[&str], weekday: &str, year: &str) -> Result<(), String> {
+    if fields.iter().any(|field| field.split(',').any(|part| part.starts_with('/'))) {
+        return Err("A step needs a start: write 0/10 or */10, not /10".into());
+    }
+    if weekday.contains('/') { return Err("EventBridge does not allow / in day-of-week".into()); }
+    if weekday.contains('#') && weekday.contains(',') { return Err("EventBridge allows a single # in day-of-week, e.g. 6#3".into()); }
+    // The years of `2026`, `2026-2028` or `2026/2` (the step is not a year).
+    let years = year.split(',').filter_map(|part| part.split('/').next()).flat_map(|range| range.split('-'));
+    if years.filter_map(|y| y.parse::<u32>().ok()).any(|y| !(1970..=2199).contains(&y)) {
+        return Err("EventBridge years go from 1970 to 2199".into());
+    }
+    Ok(())
+}
+
+/// EventBridge accepts ranges that wrap around (`20-2` for 8 pm to 2 am,
+/// `FRI-MON`), croner does not: each such `a-b` of `field` becomes
+/// `a-max,min-b`, its step (if any) kept on both. `names` are the values'
+/// names from `min` on (months, days of the week).
+fn unwrap_ranges(field: &str, min: u32, max: u32, names: &[&str]) -> String {
+    let value = |text: &str| text.parse::<u32>().ok()
+        .or_else(|| names.iter().position(|name| name.eq_ignore_ascii_case(text)).map(|i| i as u32 + min));
+    field.split(',').map(|part| {
+        let (range, step) = part.split_once('/').map_or((part, String::new()), |(range, step)| (range, format!("/{step}")));
+        match range.split_once('-').map(|(a, b)| (value(a), value(b))) {
+            Some((Some(start), Some(end))) if start > end => format!("{start}-{max}{step},{min}-{end}{step}"),
+            _ => part.to_owned(),
+        }
+    }).collect::<Vec<_>>().join(",")
 }
 
 /// A `rate(value unit)`: EventBridge wants the unit singular for 1 and plural otherwise.
@@ -97,7 +146,10 @@ fn rate_report(rate: &str) -> Result<String, String> {
 /// An EventBridge Scheduler one-time schedule, `at(yyyy-mm-ddThh:mm:ss)`, in
 /// the schedule's time zone (UTC unless one is set).
 fn at_report(at: &str, now: DateTime<Utc>) -> Result<String, String> {
-    let when = NaiveDateTime::parse_from_str(at, "%Y-%m-%dT%H:%M:%S").map_err(|_| "A one-time schedule is at(yyyy-mm-ddThh:mm:ss), e.g. at(2026-12-25T09:00:00)")?;
+    const FORMAT: &str = "A one-time schedule is at(yyyy-mm-ddThh:mm:ss), e.g. at(2026-12-25T09:00:00)";
+    // chrono also takes a signed or longer year, and a leap second (:60): EventBridge does not.
+    if at.len() != 19 || !at.starts_with(|c: char| c.is_ascii_digit()) { return Err(FORMAT.into()); }
+    let when = NaiveDateTime::parse_from_str(at, "%Y-%m-%dT%H:%M:%S").ok().filter(|t| t.and_utc().timestamp_subsec_nanos() < 1_000_000_000).ok_or(FORMAT)?;
     Ok(format!("Syntax: EventBridge Scheduler one-time schedule\nRuns once: {}\nTime zone: the schedule's (UTC unless one is set)\nRelative (if UTC): {}",
         when.format(super::unix_time::DATE_TIME_FORMAT), super::unix_time::relative(when.and_utc() - now)))
 }
@@ -149,6 +201,32 @@ mod tests {
         // 15 Feb 2026 is a Sunday: the nearest weekday is Monday the 16th.
         assert!(report("cron(0 9 15W * ? *)", now).unwrap().contains("  Mon 2026-02-16 09:00 UTC"));
         assert!(report("cron(61 * ? * * *)", now).is_err());
+    }
+
+    #[test]
+    fn fixes_from_the_review() {
+        let now = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 10, 7, 0).unwrap();
+        // L alone in day-of-week is the last day of the week: Saturday.
+        assert!(report("cron(0 12 ? * L *)", now).unwrap().contains("  Sat 2026-01-03 12:00 UTC"));
+        // AWS's own example: ranges may wrap around (8 pm to 2 am), weekdays and months too.
+        assert!(report("cron(0/30 20-2 ? * MON-FRI *)", now).unwrap().contains("Next 5 runs (UTC):\n  Thu 2026-01-01 20:00 UTC"));
+        let late = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 23, 45, 0).unwrap();
+        let night = report("cron(0/30 20-2 ? * MON-FRI *)", late).unwrap();
+        assert!(night.contains("  Fri 2026-01-02 00:00 UTC") && night.contains("  Fri 2026-01-02 02:00 UTC"), "{night}");
+        assert_eq!(unwrap_ranges("20-2/2,5", 0, 23, &[]), "20-23/2,0-2/2,5");
+        assert_eq!(unwrap_ranges("fri-mon", 1, 7, &WEEKDAYS), "6-7,1-2");
+        assert_eq!(unwrap_ranges("L-3", 1, 31, &[]), "L-3");
+        assert!(report("cron(0 12 ? * FRI-MON *)", now).unwrap().contains("  Sat 2026-01-03 12:00 UTC"));
+        assert!(report("cron(0 0 1 NOV-FEB ? *)", now).unwrap().contains("  Sun 2026-02-01 00:00 UTC"));
+        // What EventBridge refuses: years outside 1970-2199, several # or a / in day-of-week.
+        assert!(report("cron(0 0 1 1 ? 2300)", now).unwrap_err().contains("1970"));
+        assert!(report("cron(0 0 1 1 ? 1900)", now).unwrap_err().contains("1970"));
+        assert!(report("cron(0 12 ? * 3#1,6#3 *)", now).unwrap_err().contains("#"));
+        assert!(report("cron(0 12 ? * */2 *)", now).unwrap_err().contains("/"));
+        assert!(report("cron(/10 * * * ? *)", now).is_err());
+        // at(): a real time, written exactly yyyy-mm-ddThh:mm:ss.
+        assert!(report("at(2026-12-31T23:59:60)", now).is_err());
+        assert!(report("at(+12026-01-01T00:00:00)", now).is_err());
     }
 
     #[test]
