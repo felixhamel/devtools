@@ -5,7 +5,7 @@
 <h1 align="center">DevUtils</h1>
 
 <p align="center">
-  35 everyday developer tools in one fast, native macOS window.<br>
+  37 everyday developer tools in one fast, native macOS window.<br>
   Built in Rust with <a href="https://github.com/emilk/egui">egui</a>. Everything runs offline.
 </p>
 
@@ -21,7 +21,7 @@ DevUtils gathers the small tools developers reach for every day — formatting J
 
 ## Highlights
 
-- **Paste anything.** Press ⌘V on the home screen: DevUtils recognizes JWTs, JSON, CSV, timestamps and dates, UUIDs and ULIDs, IP addresses and CIDR blocks, AWS ARNs, URLs, colors, cron expressions, certificates, Base64 and more, and opens the right tool with it. Drop files the same way: two images open in Image Compare, two texts in Code Compare.
+- **Paste anything.** Press ⌘V on the home screen: DevUtils recognizes JWTs, JSON, YAML, TOML, CSV, CloudWatch Logs data, timestamps and dates, UUIDs and ULIDs, IP addresses and CIDR blocks, AWS ARNs, URLs, colors, cron expressions, certificates, Base64 and more, and opens the right tool with it. Drop files the same way: two images open in Image Compare, two texts in Code Compare.
 - **Live results.** Tools update as you type, with syntax highlighting (JSON, SQL, JS, HTML, CSS, XML…). Results shown as a list — hashes, color formats, dates, certificate fields — have a copy button on each value.
 - **Chain tools.** The **⇄ Reuse** menu sends a result back as input, or to another tool: decode Base64, then send the JSON to the formatter.
 - **Find a tool fast.** ⌘K opens a palette with fuzzy search. Star the tools you use most with ⌘D: they come first in the sidebar, on the home screen and in the palette.
@@ -60,6 +60,7 @@ DevUtils gathers the small tools developers reach for every day — formatting J
 |---|---|
 | **JSON Format/Validate** | Validates as you type; formats (2 or 4 spaces, tabs) or minifies, sorts keys, shows a collapsible tree; errors point at the line and column |
 | **JSON ↔ CSV** | An array of objects to CSV, nested objects as `address.city` columns, and CSV back to JSON with numbers and booleans detected; comma, semicolon or tab |
+| **JSON ↔ YAML ↔ TOML** | Converts between the three, the input's format being detected; YAML anchors and merge keys (`<<: *defaults`) are expanded, and several YAML documents become an array |
 | **URL Parser** | Splits a URL into scheme, credentials, host, port, path, query parameters and fragment; edit any part and the URL is rebuilt |
 
 ### Network
@@ -74,6 +75,7 @@ DevUtils gathers the small tools developers reach for every day — formatting J
 |---|---|
 | **Base64 String Encode/Decode** | Encodes text or a dropped file, decodes Base64 (URL-safe alphabet, line breaks and missing padding accepted); hex dump of binary results |
 | **Base64 Image Encode/Decode** | Image ↔ data URI with a preview (PNG, JPEG, WebP, BMP); open, drop or paste |
+| **CloudWatch Logs Decoder** | Decodes CloudWatch Logs subscription data (gzip + Base64) from a Lambda, Kinesis or Firehose event, or the data alone: one line per log event with its time, or the JSON |
 | **URL Encode/Decode** | Component (`encodeURIComponent`) or full URL (`encodeURI`) encoding, and decoding |
 | **HTML Entity Encode/Decode** | Encodes `& < > " '`; decodes every named entity (`&eacute;`, `&nbsp;`…) and numeric ones |
 | **Backslash Escape/Unescape** | Escapes text for a string literal, or turns `\n`, `\t`, `\uXXXX`… back into characters |

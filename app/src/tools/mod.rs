@@ -13,6 +13,7 @@ mod arn;
 mod base64_image;
 mod base64_string;
 mod case;
+mod cloudwatch;
 mod code;
 mod code_compare;
 mod color;
@@ -39,6 +40,7 @@ mod text;
 mod unix_time;
 mod url_parser;
 mod x509;
+mod yaml_toml;
 
 /// Sidebar groups, shown in the order of [`Category::ALL`]; see
 /// [`Category::label`] for what each one holds.
@@ -265,8 +267,10 @@ pub fn registry() -> Vec<Box<dyn Tool>> {
         Box::new(unix_time::UnixTime::default()),
         Box::new(json_format::JsonFormat::default()),
         Box::new(json_csv::JsonCsv::default()),
+        Box::new(yaml_toml::YamlToml::default()),
         Box::new(base64_string::Base64String::default()),
         Box::new(base64_image::Base64Image::default()),
+        Box::new(cloudwatch::CloudWatch::default()),
         Box::new(jwt::Jwt::default()),
         Box::new(regex_tester::RegexTester::default()),
         encoding::url(),
