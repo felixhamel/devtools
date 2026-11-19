@@ -6,37 +6,72 @@ use serde_json::Value;
 use super::{Category, Tool};
 use crate::ui::{self, icon, theme, Highlight, TextIo};
 
+/// Example for the "Sample" button: a small minified document.
 const SAMPLE: &str = r#"{"name":"DevUtils","version":2,"tags":["json","base64"],"settings":{"theme":"dark","fontSize":13,"beta":false},"owner":null}"#;
 /// Arrays longer than this show only their first items in the tree.
 const TREE_ARRAY_LIMIT: usize = 500;
 
+/// Index of the "Minify" action in the input pane ("Format" is 0).
+const MINIFY: usize = 1;
+
+/// Characters of context shown on each side of the error in the caret snippet.
+const SNIPPET_CONTEXT: usize = 30;
+
+/// Strings in the tree view (green).
+const STRING_COLOR: egui::Color32 = egui::Color32::from_rgb(195, 232, 141);
+/// Numbers in the tree view (orange).
+const NUMBER_COLOR: egui::Color32 = egui::Color32::from_rgb(247, 140, 108);
+/// `true` and `false` in the tree view (purple).
+const BOOL_COLOR: egui::Color32 = egui::Color32::from_rgb(199, 146, 234);
+
+/// Indentation of formatted output, picked in the Options menu.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Indent { Two, Four, Tab }
 
 impl Indent {
+    /// Every choice, in menu order.
     const ALL: [Indent; 3] = [Indent::Two, Indent::Four, Indent::Tab];
+    /// Name in the Options menu and its tooltip.
     fn label(self) -> &'static str { match self { Indent::Two => "2 spaces", Indent::Four => "4 spaces", Indent::Tab => "Tab" } }
+    /// One level of indentation, as `serde_json`'s formatter wants it.
     fn bytes(self) -> &'static [u8] { match self { Indent::Two => b"  ", Indent::Four => b"    ", Indent::Tab => b"\t" } }
 }
 
+/// How the output pane shows a valid document.
 #[derive(Clone, Copy, PartialEq)]
 enum View { Text, Tree }
 
 /// A parse error with its 1-based position, used for the caret snippet.
 #[derive(Debug, PartialEq)]
-struct JsonError { line: usize, column: usize, message: String }
+struct JsonError {
+    line: usize,
+    /// Counted in characters (see [`char_column`]), not bytes as `serde_json` reports it.
+    column: usize,
+    /// `serde_json`'s message without its " at line L column C" suffix.
+    message: String,
+}
 
 impl JsonError {
+    /// The message for the error label: "Line 3, column 3: expected `,` or `}`".
     fn summary(&self) -> String { format!("Line {}, column {}: {}", self.line, self.column, self.message) }
 }
 
+/// Parses JSON, keeping the error position apart from the message.
 fn parse(input: &str) -> Result<Value, JsonError> {
     serde_json::from_str(input).map_err(|e| {
         // serde_json appends " at line L column C"; the position is shown separately.
         let full = e.to_string();
         let message = full.rsplit_once(" at line ").map_or(full.clone(), |(message, _)| message.to_owned());
-        JsonError { line: e.line(), column: e.column(), message }
+        JsonError { line: e.line(), column: char_column(input, e.line(), e.column()), message }
     })
+}
+
+/// serde_json counts columns in bytes; people and the caret count characters
+/// (`é` is two bytes). Converts a 1-based byte column of `line` to characters.
+fn char_column(input: &str, line: usize, byte_column: usize) -> usize {
+    let Some(text) = line.checked_sub(1).and_then(|l| input.lines().nth(l)) else { return byte_column };
+    let bytes = byte_column.saturating_sub(1).min(text.len());
+    text.char_indices().take_while(|&(at, _)| at < bytes).count() + 1
 }
 
 /// Orders object keys alphabetically, at every depth.
@@ -52,6 +87,8 @@ fn sort_keys(value: Value) -> Value {
     }
 }
 
+/// Pretty-prints `value` with the chosen indentation (`serde_json`'s
+/// `to_string_pretty` only does 2 spaces).
 fn pretty(value: &Value, indent: Indent) -> String {
     let mut out = Vec::new();
     let mut serializer = serde_json::Serializer::with_formatter(&mut out, serde_json::ser::PrettyFormatter::with_indent(indent.bytes()));
@@ -63,21 +100,24 @@ fn pretty(value: &Value, indent: Indent) -> String {
 fn caret_snippet(input: &str, error: &JsonError) -> Option<String> {
     let line: Vec<char> = input.lines().nth(error.line.checked_sub(1)?)?.chars().collect();
     let column = error.column.saturating_sub(1).min(line.len());
-    let start = column.saturating_sub(30);
-    let end = (column + 30).min(line.len());
+    let start = column.saturating_sub(SNIPPET_CONTEXT);
+    let end = (column + SNIPPET_CONTEXT).min(line.len());
     let prefix = if start > 0 { "…" } else { "" };
     let excerpt: String = line[start..end].iter().collect();
     let caret = " ".repeat(prefix.chars().count() + column - start);
     Some(format!("{prefix}{excerpt}\n{caret}^"))
 }
 
+/// The JSON Format/Validate tool.
 pub struct JsonFormat {
+    /// Input and output text; `io.active` is the action, see [`MINIFY`].
     io: TextIo,
     indent: Indent,
     sort_keys: bool,
     view: View,
     /// The last valid document, for the tree view.
     parsed: Option<Value>,
+    /// The error line with a caret under the error, see [`caret_snippet`].
     snippet: Option<String>,
 }
 
@@ -101,7 +141,7 @@ impl JsonFormat {
         match parse(&self.io.input) {
             Ok(value) => {
                 let value = if self.sort_keys { sort_keys(value) } else { value };
-                self.io.output = if self.io.active == 1 { value.to_string() } else { pretty(&value, self.indent) };
+                self.io.output = if self.io.active == MINIFY { value.to_string() } else { pretty(&value, self.indent) };
                 self.io.error.clear();
                 self.parsed = Some(value);
             }
@@ -121,6 +161,8 @@ impl Tool for JsonFormat {
     fn category(&self) -> Category { Category::Data }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
+        // The ⇄ menu leaves out the tool it is drawn in.
+        let tool_name = self.name();
         ui::description(ui, "Validates JSON as you type, then formats or minifies it. Key order is kept unless you sort.");
         ui.add_space(10.0);
         ui::split(ui, |left, right| {
@@ -138,7 +180,7 @@ impl Tool for JsonFormat {
             // The options live in the output toolbar: under the input, the editor takes all the space.
             let reuse = ui::toolbar(right, "Output:", |ui| {
                 ui::copy_button(ui, &self.io.output);
-                let reuse = super::reuse_menu(ui, &self.io.output, "JSON Format/Validate");
+                let reuse = super::reuse_menu(ui, &self.io.output, tool_name);
                 ui.separator();
                 let (text, tree) = (format!("{}  Text", icon::TEXT_ALIGN_LEFT), format!("{}  Tree", icon::TREE_STRUCTURE));
                 ui::segmented(ui, &mut self.view, &[(View::Text, text.as_str()), (View::Tree, tree.as_str())]);
@@ -182,6 +224,7 @@ impl Tool for JsonFormat {
 }
 
 /// Draws a JSON value as a collapsible tree; objects and arrays show their size.
+/// The first two levels start open. `id` keeps each node's open state stable.
 fn tree(ui: &mut egui::Ui, key: Option<&str>, value: &Value, id: egui::Id, depth: usize) {
     let key_text = |ui: &mut egui::Ui| if let Some(key) = key { ui.label(egui::RichText::new(format!("{key}:")).monospace().color(theme::MUTED)); };
     match value {
@@ -204,9 +247,9 @@ fn tree(ui: &mut egui::Ui, key: Option<&str>, value: &Value, id: egui::Id, depth
             ui.horizontal(|ui| {
                 key_text(ui);
                 let (text, color) = match leaf {
-                    Value::String(s) => (format!("{s:?}"), egui::Color32::from_rgb(195, 232, 141)),
-                    Value::Number(n) => (n.to_string(), egui::Color32::from_rgb(247, 140, 108)),
-                    Value::Bool(b) => (b.to_string(), egui::Color32::from_rgb(199, 146, 234)),
+                    Value::String(s) => (format!("{s:?}"), STRING_COLOR),
+                    Value::Number(n) => (n.to_string(), NUMBER_COLOR),
+                    Value::Bool(b) => (b.to_string(), BOOL_COLOR),
                     _ => ("null".to_owned(), theme::SUBTLE),
                 };
                 ui.add(egui::Label::new(egui::RichText::new(text).monospace().color(color)).truncate().selectable(true));
@@ -240,5 +283,10 @@ mod tests {
         assert_eq!((error.line, error.column), (3, 3));
         assert_eq!(error.summary(), "Line 3, column 3: expected `,` or `}`");
         assert_eq!(caret_snippet(input, &error).unwrap(), "  \"b\": 2\n  ^");
+        // Columns count characters, not bytes: the caret stays under the `"` of "x".
+        let accented = "{\"éé\": 1 \"x\": 2}";
+        let error = parse(accented).unwrap_err();
+        assert_eq!(error.column, 10);
+        assert_eq!(caret_snippet(accented, &error).unwrap(), format!("{accented}\n{}^", " ".repeat(9)));
     }
 }

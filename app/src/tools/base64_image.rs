@@ -1,20 +1,22 @@
-//! Base64 Image: image file → data URI, and Base64 / data URI → preview.
+//! Base64 Image Encode/Decode: image file → data URI, and Base64 / data URI → preview.
 use base64::{engine::general_purpose::STANDARD, Engine};
 use eframe::egui;
 use super::{encoding::decode_base64, Category, Tool};
 use crate::ui::{self, icon};
 
-/// Image types the Open dialog offers.
-const EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "bmp"];
-
+/// The Base64 Image Encode/Decode tool.
 #[derive(Default)]
 pub struct Base64Image {
+    /// The data URI or Base64, as typed or produced by encoding a file.
     text: String,
     /// File name of the encoded image, if it came from a file.
     name: String,
+    /// One-line summary above the preview: name, format, size.
     info: String,
     error: String,
+    /// The decoded image; `None` when the text is empty or invalid.
     texture: Option<egui::TextureHandle>,
+    /// Decodes typed or pasted text once typing pauses (at once for short text).
     live: ui::Debounce,
 }
 
@@ -25,32 +27,43 @@ impl Base64Image {
             Ok((info, image)) => {
                 self.info = if self.name.is_empty() { info } else { format!("{} · {info}", self.name) };
                 self.error.clear();
-                self.texture = Some(ctx.load_texture("base64-image", image, Default::default()));
+                self.texture = Some(ctx.load_texture("base64-image", image, egui::TextureOptions::default()));
             }
-            Err(e) => { self.info.clear(); self.error = e; self.texture = None; }
+            Err(e) => self.clear_preview(e),
         }
+    }
+
+    /// Removes the preview and its summary, and shows `error` (empty for none).
+    fn clear_preview(&mut self, error: String) {
+        self.info.clear();
+        self.error = error;
+        self.texture = None;
     }
 
     /// Decodes the Base64 text field into the preview (an empty field clears it).
     fn decode_text(&mut self, ctx: &egui::Context) {
-        if self.text.trim().is_empty() { self.info.clear(); self.error.clear(); self.texture = None; return; }
-        match decode(&self.text) { Ok(bytes) => self.show(ctx, &bytes), Err(e) => { self.info.clear(); self.error = e; self.texture = None; } }
+        if self.text.trim().is_empty() { self.clear_preview(String::new()); return; }
+        match decode(&self.text) { Ok(bytes) => self.show(ctx, &bytes), Err(e) => self.clear_preview(e) }
     }
 
     /// Encodes an image file as a data URI and previews it.
     fn encode(&mut self, ctx: &egui::Context, name: String, bytes: &[u8]) {
         match data_uri(bytes) {
             Ok(uri) => { self.text = uri; self.name = name; self.show(ctx, bytes); }
-            Err(e) => { self.error = format!("{name}: {e}"); self.texture = None; }
+            // Keep what was shown: only the error is new.
+            Err(e) => self.error = format!("{name}: {e}"),
         }
     }
 
+    /// Encodes a file read with `ui::read_path` or `ui::read_dropped`, or shows why it could not be read.
     fn encode_file(&mut self, ctx: &egui::Context, file: Result<(String, Vec<u8>), String>) {
         match file { Ok((name, bytes)) => self.encode(ctx, name, &bytes), Err(e) => self.error = e }
     }
 }
 
 /// The example: a small gradient disc on a transparent background, as PNG.
+/// The disc (radius 44 px) is centered in 96×96 px and fades from green at
+/// the top to blue at the bottom.
 fn sample_png() -> Vec<u8> {
     let image = image::RgbaImage::from_fn(96, 96, |x, y| {
         let distance = ((x as f32 - 47.5).powi(2) + (y as f32 - 47.5).powi(2)).sqrt();
@@ -84,7 +97,7 @@ impl Tool for Base64Image {
                 if ui::clear_button(ui) { *self = Self::default(); }
                 ui.separator();
                 if ui.add(ui::icon_button(icon::FOLDER_OPEN, "Open image", false)).clicked() {
-                    if let Some(path) = ui::pick_files("Open an image to encode", &EXTENSIONS).first() { self.encode_file(&ctx, ui::read_path(path)); }
+                    if let Some(path) = ui::pick_files("Open an image to encode", &ui::IMAGE_EXTENSIONS).first() { self.encode_file(&ctx, ui::read_path(path)); }
                 }
                 ui::copy_button(ui, &self.text);
             });
@@ -128,16 +141,22 @@ impl Tool for Base64Image {
     }
 }
 
+/// The image format, detected from the first bytes (the file name is not used).
+fn image_format(bytes: &[u8]) -> Result<image::ImageFormat, String> {
+    image::guess_format(bytes).map_err(|_| "Unsupported or unrecognized image format".to_string())
+}
+
 /// `data:image/png;base64,…` with the MIME type detected from the bytes.
 fn data_uri(bytes: &[u8]) -> Result<String, String> {
-    let format = image::guess_format(bytes).map_err(|_| "Unsupported or unrecognized image format".to_string())?;
+    let format = image_format(bytes)?;
     Ok(format!("data:{};base64,{}", format.to_mime_type(), STANDARD.encode(bytes)))
 }
 
-/// Accepts a full data URI or bare Base64.
+/// The image bytes of a full data URI or of bare Base64.
 fn decode(text: &str) -> Result<Vec<u8>, String> {
     let text = text.trim();
     let payload = match text.strip_prefix("data:") {
+        // `data:[<mime>][;base64],<data>`: the data follows the first comma.
         Some(rest) => rest.split_once(',').map(|(_, data)| data).ok_or("Data URI has no comma before the Base64 data")?,
         None => text,
     };
@@ -146,7 +165,7 @@ fn decode(text: &str) -> Result<Vec<u8>, String> {
 
 /// Decodes an image into pixels plus a one-line summary (format, size, bytes).
 fn load(bytes: &[u8]) -> Result<(String, egui::ColorImage), String> {
-    let format = image::guess_format(bytes).map_err(|_| "Unsupported or unrecognized image format".to_string())?;
+    let format = image_format(bytes)?;
     let image = image::load_from_memory_with_format(bytes, format).map_err(|e| e.to_string())?.into_rgba8();
     let (w, h) = image.dimensions();
     let info = format!("{} · {w}×{h} px · {}", format!("{format:?}").to_uppercase(), ui::human_size(bytes.len()));

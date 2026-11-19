@@ -6,29 +6,44 @@ use chrono::{DateTime, Utc};
 use eframe::egui;
 use hmac::{Hmac, Mac};
 use serde_json::Value;
-use super::{unix_time::relative, Category, Tool};
+use super::{encoding::decode_base64, unix_time::{relative, DATE_TIME_FORMAT}, Category, Tool};
 use crate::ui::{self, icon, theme, Highlight};
 
 /// The public example token from jwt.io ("John Doe"), signed with its demo
 /// secret below. Neither is a credential, hence the secret-scanner exceptions.
 const SAMPLE_JWT: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"; // gitleaks:allow
+/// The HMAC secret that signs [`SAMPLE_JWT`].
 const SAMPLE_SECRET: &str = "your-256-bit-secret"; // gitleaks:allow
 
-/// Colors of the three parts of a token, as on jwt.io.
+/// Header color (red), as on jwt.io: in the token and on the "Header" title.
 const HEADER_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 120, 120);
+/// Payload color (purple), as on jwt.io.
 const PAYLOAD_COLOR: egui::Color32 = egui::Color32::from_rgb(205, 140, 255);
+/// Signature color (blue), as on jwt.io.
 const SIGNATURE_COLOR: egui::Color32 = egui::Color32::from_rgb(80, 200, 230);
 
-/// A decoded token. `parts` are the byte ranges of header, payload and
-/// signature in the text as typed (for coloring).
+/// A decoded token.
 #[derive(Debug)]
-struct Decoded { header: Value, payload: Value, signing_input: String, signature: Vec<u8>, parts: [Range<usize>; 3] }
+struct Decoded {
+    header: Value,
+    payload: Value,
+    /// `header.payload` as typed (still Base64URL): the bytes the signature covers.
+    signing_input: String,
+    signature: Vec<u8>,
+    /// Byte ranges of header, payload and signature in the text as typed (for coloring).
+    parts: [Range<usize>; 3],
+}
 
+/// Decodes one segment: URL-safe Base64 without padding (a stray `=` is tolerated). `name`
+/// ("header", "payload"…) is used in the error message.
 fn decode_part(part: &str, name: &str) -> Result<Vec<u8>, String> {
     URL_SAFE_NO_PAD.decode(part.trim_end_matches('=')).map_err(|e| format!("The {name} is not valid Base64URL: {e}"))
 }
 
+/// Splits a token into its three dot-separated segments and decodes them.
+/// Whitespace around the token is ignored.
 fn decode(text: &str) -> Result<Decoded, String> {
+    // Leading whitespace shifts the ranges in `parts`, which index the text as typed.
     let offset = text.len() - text.trim_start().len();
     let token = text.trim();
     let pieces: Vec<&str> = token.split('.').collect();
@@ -52,6 +67,7 @@ fn decode(text: &str) -> Result<Decoded, String> {
 /// Checks an HMAC signature in constant time. Other algorithms need a public
 /// key and are reported as unsupported.
 fn verify(decoded: &Decoded, secret: &[u8]) -> Result<bool, String> {
+    /// Whether `signature` is the HMAC of `data` with `secret`, using the MAC type `M`.
     fn check<M: Mac + hmac::digest::KeyInit>(secret: &[u8], data: &[u8], signature: &[u8]) -> bool {
         let mut mac = <M as hmac::digest::KeyInit>::new_from_slice(secret).expect("HMAC accepts keys of any length");
         mac.update(data);
@@ -62,6 +78,7 @@ fn verify(decoded: &Decoded, secret: &[u8]) -> Result<bool, String> {
         Some("HS256") => Ok(check::<Hmac<sha2::Sha256>>(secret, data, &decoded.signature)),
         Some("HS384") => Ok(check::<Hmac<sha2::Sha384>>(secret, data, &decoded.signature)),
         Some("HS512") => Ok(check::<Hmac<sha2::Sha512>>(secret, data, &decoded.signature)),
+        Some("none") => Err("Unsigned token (alg \"none\"): there is no signature to verify".into()),
         Some(other) => Err(format!("{other} signatures need a public key: only HS256, HS384 and HS512 can be verified here")),
         None => Err("The header has no \"alg\"".into()),
     }
@@ -69,13 +86,25 @@ fn verify(decoded: &Decoded, secret: &[u8]) -> Result<bool, String> {
 
 /// Whether the token can be used at `now`, from its `exp` and `nbf` claims.
 #[derive(Debug, PartialEq)]
-enum Validity { NoExpiry, Valid(DateTime<Utc>), Expired(DateTime<Utc>), NotYet(DateTime<Utc>) }
+enum Validity {
+    /// No `exp` claim.
+    NoExpiry,
+    /// Usable now; holds the `exp` time.
+    Valid(DateTime<Utc>),
+    /// Holds the `exp` time, which has passed.
+    Expired(DateTime<Utc>),
+    /// Holds the `nbf` time, still in the future.
+    NotYet(DateTime<Utc>),
+}
 
+/// A time claim (`exp`, `nbf`, `iat`) as an instant. JWT times are seconds
+/// since the epoch and may have a fraction, which is dropped.
 fn claim_time(payload: &Value, claim: &str) -> Option<DateTime<Utc>> {
     let seconds = payload.get(claim)?.as_f64()?;
     DateTime::from_timestamp(seconds.floor() as i64, 0)
 }
 
+/// The token's status at `now`. A future `nbf` wins over an expired `exp`.
 fn validity(payload: &Value, now: DateTime<Utc>) -> Validity {
     if let Some(nbf) = claim_time(payload, "nbf").filter(|nbf| *nbf > now) { return Validity::NotYet(nbf); }
     match claim_time(payload, "exp") {
@@ -85,21 +114,30 @@ fn validity(payload: &Value, now: DateTime<Utc>) -> Validity {
     }
 }
 
+/// The JWT Debugger tool.
 #[derive(Default)]
 pub struct Jwt {
     token: String,
+    /// HMAC secret; empty = do not verify.
     secret: String,
+    /// Decode `secret` from Base64 before use, for issuers that store binary keys that way.
     secret_is_base64: bool,
+    /// `None` when the token is empty or invalid (see `error`).
     decoded: Option<Decoded>,
-    /// Header/payload as pretty JSON, and the colored ranges of the token.
+    /// Header as pretty JSON.
     header_json: String,
+    /// Payload as pretty JSON.
     payload_json: String,
+    /// The colored ranges of the token, see [`Decoded::parts`].
     spans: Vec<(Range<usize>, egui::Color32)>,
+    /// Verification result: `None` without a secret, `Err` when it cannot be
+    /// checked (algorithm without HMAC, invalid Base64 secret).
     signature: Option<Result<bool, String>>,
     error: String,
 }
 
 impl Jwt {
+    /// Decodes the token and, when a secret is entered, verifies the signature.
     fn update(&mut self) {
         self.decoded = None;
         self.spans.clear();
@@ -112,7 +150,7 @@ impl Jwt {
                 self.payload_json = serde_json::to_string_pretty(&decoded.payload).unwrap_or_default();
                 self.spans = decoded.parts.iter().cloned().zip([HEADER_COLOR, PAYLOAD_COLOR, SIGNATURE_COLOR]).collect();
                 if !self.secret.is_empty() {
-                    let secret = if self.secret_is_base64 { super::encoding::decode_base64(&self.secret) } else { Ok(self.secret.as_bytes().to_vec()) };
+                    let secret = if self.secret_is_base64 { decode_base64(&self.secret) } else { Ok(self.secret.as_bytes().to_vec()) };
                     self.signature = Some(secret.and_then(|secret| verify(&decoded, &secret)));
                 }
                 self.decoded = Some(decoded);
@@ -159,7 +197,7 @@ impl Jwt {
             egui::Grid::new("jwt-times").num_columns(3).spacing([12.0, 4.0]).show(ui, |ui| {
                 for (claim, label, time) in times {
                     ui.label(egui::RichText::new(format!("{label} ({claim})")).color(theme::MUTED));
-                    ui.label(egui::RichText::new(time.with_timezone(&chrono::Local).format("%a %-d %b %Y, %H:%M:%S").to_string()).monospace());
+                    ui.label(egui::RichText::new(time.with_timezone(&chrono::Local).format(DATE_TIME_FORMAT).to_string()).monospace());
                     ui.label(egui::RichText::new(relative(time - now)).color(theme::MUTED));
                     ui.end_row();
                 }
@@ -243,6 +281,8 @@ mod tests {
         assert_eq!(verify(&decoded, b"wrong secret"), Ok(false));
         let rs256 = decode("eyJhbGciOiJSUzI1NiJ9.e30.c2ln").unwrap();
         assert!(verify(&rs256, b"x").unwrap_err().contains("public key"));
+        let unsigned = decode("eyJhbGciOiJub25lIn0.e30.").unwrap();
+        assert!(verify(&unsigned, b"x").unwrap_err().starts_with("Unsigned token"));
     }
 
     #[test]

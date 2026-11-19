@@ -34,6 +34,7 @@ pub fn words(text: &str) -> Vec<String> {
     words
 }
 
+/// `word` with its first character in uppercase; the rest is unchanged.
 pub fn capitalize(word: &str) -> String {
     let mut chars = word.chars();
     chars.next().map(|first| first.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()
@@ -48,7 +49,7 @@ mod tests {
         assert_eq!(words("helloWorld"), ["hello", "world"]);
         assert_eq!(words("HTTPServer_id-2x"), ["http", "server", "id", "2x"]);
         assert_eq!(words("user ID v2Beta"), ["user", "id", "v2", "beta"]);
-        assert!(words(" -_ ").is_empty());
+        assert_eq!(words(" -_ "), Vec::<String>::new());
     }
 
     #[test]

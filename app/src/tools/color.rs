@@ -1,19 +1,23 @@
-//! Color Converter: any CSS color (hex, rgb(), hsl(), hwb(), oklch(), names) →
-//! every format, with a picker, a preview and WCAG contrast ratios.
+//! Color Converter: any CSS color (hex, `rgb()`, `hsl()`, `hwb()`, `oklch()`,
+//! names) → every format, with a picker, a preview and WCAG contrast ratios.
 use csscolorparser::Color;
 use eframe::egui;
 use super::{Category, Tool};
 use crate::ui::{self, icon, theme};
 
+/// The example color. The picker starts from the same green while the field is empty.
 const SAMPLE: &str = "#56D28F";
 
+/// A channel from 0 to 1 as a byte, clamped and rounded.
 fn channel(value: f32) -> u8 { (value.clamp(0.0, 1.0) * 255.0).round() as u8 }
 
+/// `#RRGGBB`, or `#RRGGBBAA` when the color is not opaque.
 fn hex(color: &Color) -> String {
     let [r, g, b, a] = [color.r, color.g, color.b, color.a].map(channel);
     if a == 255 { format!("#{r:02X}{g:02X}{b:02X}") } else { format!("#{r:02X}{g:02X}{b:02X}{a:02X}") }
 }
 
+/// The color for egui, to paint the preview and fill the picker.
 fn to_color32(color: &Color) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(channel(color.r), channel(color.g), channel(color.b), channel(color.a))
 }
@@ -30,6 +34,7 @@ fn contrast(a: &Color, b: &Color) -> f32 {
     (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
 }
 
+/// The WCAG level a contrast ratio reaches: AA needs 4.5:1 (3:1 for large text), AAA 7:1.
 fn wcag_level(ratio: f32) -> &'static str {
     match ratio {
         r if r >= 7.0 => "AAA",
@@ -62,27 +67,36 @@ fn describe(color: &Color) -> String {
     lines.join("\n")
 }
 
+/// A large swatch with sample text in white and in black, to judge readability.
+fn preview(ui: &mut egui::Ui, color: &Color) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 120.0), egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 8.0, to_color32(color));
+    painter.rect_stroke(rect, 8.0, egui::Stroke::new(1.0_f32, theme::EDITOR_STROKE), egui::StrokeKind::Inside);
+    let font = egui::FontId::proportional(18.0);
+    painter.text(rect.center() - egui::vec2(0.0, 18.0), egui::Align2::CENTER_CENTER, "White text  Aa", font.clone(), egui::Color32::WHITE);
+    painter.text(rect.center() + egui::vec2(0.0, 18.0), egui::Align2::CENTER_CENTER, "Black text  Aa", font, egui::Color32::BLACK);
+}
+
+/// The Color Converter tool: a color field, picker and preview on the left, every format on the right.
 #[derive(Default)]
-pub struct ColorTool { input: String, color: Option<Color>, output: String, error: String }
+pub struct ColorTool {
+    input: String,
+    /// The parsed input; `None` while it is empty or not a color.
+    color: Option<Color>,
+    /// Every format and the contrast ratios, as `Key: value` lines.
+    output: String,
+    error: String,
+}
 
 impl ColorTool {
+    /// Parses the input again and describes the color, or explains what is accepted.
     fn update(&mut self) {
         if self.input.trim().is_empty() { self.color = None; self.output.clear(); self.error.clear(); return; }
         match csscolorparser::parse(self.input.trim()) {
             Ok(color) => { self.output = describe(&color); self.color = Some(color); self.error.clear(); }
             Err(_) => { self.color = None; self.output.clear(); self.error = "Not a CSS color: try #56D28F, rgb(86 210 143), hsl(148 57% 58%) or teal".into(); }
         }
-    }
-
-    /// A large swatch with sample text in white and in black, to judge readability.
-    fn preview(&self, ui: &mut egui::Ui, color: &Color) {
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 120.0), egui::Sense::hover());
-        let painter = ui.painter();
-        painter.rect_filled(rect, 8.0, to_color32(color));
-        painter.rect_stroke(rect, 8.0, egui::Stroke::new(1.0_f32, theme::EDITOR_STROKE), egui::StrokeKind::Inside);
-        let font = egui::FontId::proportional(18.0);
-        painter.text(rect.center() - egui::vec2(0.0, 18.0), egui::Align2::CENTER_CENTER, "White text  Aa", font.clone(), egui::Color32::WHITE);
-        painter.text(rect.center() + egui::vec2(0.0, 18.0), egui::Align2::CENTER_CENTER, "Black text  Aa", font, egui::Color32::BLACK);
     }
 }
 
@@ -92,6 +106,8 @@ impl Tool for ColorTool {
     fn category(&self) -> Category { Category::Text }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
+        // The ⇄ menu leaves out the tool it is drawn in.
+        let tool_name = self.name();
         ui::description(ui, "Type any CSS color (hex, rgb(), hsl(), hwb(), oklch() or a name) or pick one.");
         ui.add_space(10.0);
         ui::split(ui, |left, right| {
@@ -101,7 +117,8 @@ impl Tool for ColorTool {
                 if ui::sample_button(ui) { self.input = SAMPLE.into(); changed = true; }
                 if ui::clear_button(ui) { self.input.clear(); changed = true; }
                 ui.separator();
-                // The picker edits the current color; its result is written back as hex.
+                // The picker edits the current color (the sample's when there is none);
+                // its result is written back as hex.
                 let mut picked = self.color.as_ref().map_or(egui::Color32::from_rgb(86, 210, 143), to_color32);
                 if egui::color_picker::color_edit_button_srgba(ui, &mut picked, egui::color_picker::Alpha::OnlyBlend).on_hover_text("Pick a color").changed() {
                     let [r, g, b, a] = picked.to_srgba_unmultiplied();
@@ -115,12 +132,13 @@ impl Tool for ColorTool {
             }).inner.changed();
             if changed { self.update(); }
             left.add_space(12.0);
-            if let Some(color) = &self.color { self.preview(left, color); }
+            if let Some(color) = &self.color { preview(left, color); }
 
             let reuse = ui::toolbar(right, "Formats:", |ui| {
                 ui::copy_button(ui, &self.output);
-                super::reuse_menu(ui, &self.output, "Color Converter")
+                super::reuse_menu(ui, &self.output, tool_name)
             });
+            // "Use as input here" puts the hex form in the field.
             if reuse { self.input = self.color.as_ref().map(hex).unwrap_or_default(); self.update(); }
             ui::error_label(right, &self.error);
             ui::properties(right, "formats", &self.output);

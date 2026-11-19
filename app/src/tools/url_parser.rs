@@ -4,6 +4,7 @@ use eframe::egui;
 use super::{Category, Tool};
 use crate::ui::{self, icon, theme};
 
+/// Example for the "Sample" button, with every component filled in.
 const SAMPLE: &str = "https://ada:secret@api.example.com:8443/v1/search?q=rust%20egui&page=2&sort=desc#results";
 
 /// The editable parts of a URL. Query values are decoded; `port` is empty
@@ -16,10 +17,14 @@ struct Parts {
     host: String,
     port: String,
     path: String,
+    /// Query parameters in order, as (key, value); keys may repeat.
     params: Vec<(String, String)>,
+    /// Without the leading `#`.
     fragment: String,
 }
 
+/// Splits a URL into [`Parts`], plus the port in effect (explicit or the
+/// scheme's default), which the port field shows as a hint.
 fn parse(input: &str) -> Result<(Parts, Option<u16>), String> {
     let url = url::Url::parse(input.trim()).map_err(|e| format!("Invalid URL: {e}"))?;
     if url.cannot_be_a_base() { return Err("Only URLs with a host can be edited here (e.g. https://…)".into()); }
@@ -39,15 +44,17 @@ fn parse(input: &str) -> Result<(Parts, Option<u16>), String> {
 /// Query keys and values are percent-encoded (`%20` for spaces, not `+`).
 fn encode(text: &str) -> String { percent_encoding::utf8_percent_encode(text, super::encoding::COMPONENT).to_string() }
 
+/// Reassembles a URL from its parts. Parameters with an empty key and value
+/// are dropped, and an empty query, password or fragment is left out.
 fn build(parts: &Parts) -> Result<String, String> {
     let mut url = url::Url::parse(&format!("{}://{}", parts.scheme, parts.host)).map_err(|e| format!("Invalid scheme or host: {e}"))?;
-    url.set_username(&parts.username).map_err(|_| "This URL cannot have a username")?;
-    url.set_password(Some(parts.password.as_str()).filter(|p| !p.is_empty())).map_err(|_| "This URL cannot have a password")?;
+    url.set_username(&parts.username).map_err(|()| "This URL cannot have a username")?;
+    url.set_password(Some(parts.password.as_str()).filter(|p| !p.is_empty())).map_err(|()| "This URL cannot have a password")?;
     let port = match parts.port.trim() {
         "" => None,
         p => Some(p.parse::<u16>().map_err(|_| "The port must be a number from 0 to 65535")?),
     };
-    url.set_port(port).map_err(|_| "This URL cannot have a port")?;
+    url.set_port(port).map_err(|()| "This URL cannot have a port")?;
     url.set_path(&parts.path);
     let query: Vec<String> = parts.params.iter().filter(|(k, v)| !k.is_empty() || !v.is_empty())
         .map(|(k, v)| format!("{}={}", encode(k), encode(v))).collect();
@@ -56,8 +63,16 @@ fn build(parts: &Parts) -> Result<String, String> {
     Ok(url.to_string())
 }
 
+/// The URL Parser tool.
 #[derive(Default)]
-pub struct UrlParser { input: String, error: String, parts: Option<Parts>, default_port: Option<u16> }
+pub struct UrlParser {
+    input: String,
+    error: String,
+    /// `None` when the input is empty or not a URL with a host.
+    parts: Option<Parts>,
+    /// The port in effect for the last parsed URL, shown as a hint in the empty port field.
+    default_port: Option<u16>,
+}
 
 impl UrlParser {
     /// The URL changed: re-read its parts.
@@ -80,6 +95,7 @@ impl UrlParser {
     }
 
     /// Text fields for scheme, credentials, host, port, path and fragment.
+    /// Returns true when an edit is complete and the URL should be rebuilt.
     fn components(&mut self, ui: &mut egui::Ui) -> bool {
         let default_port = self.default_port.map(|p| format!("{p} (default)")).unwrap_or_default();
         let Some(p) = &mut self.parts else { return false };
@@ -99,7 +115,8 @@ impl UrlParser {
         changed
     }
 
-    /// The query parameters as an editable table.
+    /// The query parameters as an editable table. Returns true when one was
+    /// edited, added or removed.
     fn params(&mut self, ui: &mut egui::Ui) -> bool {
         let Some(p) = &mut self.parts else {
             ui.label(egui::RichText::new("Paste a URL to see its parameters.").color(theme::SUBTLE));
@@ -135,6 +152,8 @@ impl Tool for UrlParser {
     fn category(&self) -> Category { Category::Data }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
+        // The ⇄ menu leaves out the tool it is drawn in.
+        let tool_name = self.name();
         ui::description(ui, "Edit any part of the URL or its parameters: the URL is rebuilt as you go.");
         ui.add_space(10.0);
         ui::split(ui, |left, right| {
@@ -145,7 +164,7 @@ impl Tool for UrlParser {
                 if ui::clear_button(ui) { self.input.clear(); changed = true; }
                 ui.separator();
                 ui::copy_button(ui, &self.input);
-                super::reuse_menu(ui, &self.input, "URL Parser")
+                super::reuse_menu(ui, &self.input, tool_name)
             });
             let height = (left.available_height() * 0.3).max(80.0);
             left.allocate_ui(egui::vec2(left.available_width(), height), |ui| {

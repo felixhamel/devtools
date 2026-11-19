@@ -5,31 +5,52 @@ use std::sync::LazyLock;
 
 /// A recognized kind of text: the tool that handles it, and a short name for it.
 #[derive(Debug, PartialEq, Eq)]
-pub struct Detected { pub tool: &'static str, pub what: &'static str }
+pub struct Detected {
+    /// The [`Tool::name`](super::Tool::name) of the tool that opens it.
+    pub tool: &'static str,
+    /// What it is, for messages: "a JWT", "JSON", "an IP address"…
+    pub what: &'static str,
+}
 
+/// Compiles one of the patterns below, which are constants known to be valid.
 fn re(pattern: &str) -> Regex { Regex::new(pattern).expect("detection patterns are valid") }
 
+/// Three dot-separated parts in URL-safe Base64; the header is JSON, so it starts with `eyJ` (`{"`).
 static JWT: LazyLock<Regex> = LazyLock::new(|| re(r"^eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$"));
+/// With or without hyphens, optionally in braces or as a `urn:uuid:` URN.
 static UUID: LazyLock<Regex> = LazyLock::new(|| re(r"(?i)^(urn:uuid:)?\{?[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}\}?$"));
+/// 26 Crockford Base32 characters; the first is at most 7 so the timestamp fits in 48 bits.
 static ULID: LazyLock<Regex> = LazyLock::new(|| re(r"(?i)^[0-7][0-9A-HJKMNP-TV-Z]{25}$"));
+/// 9 to 19 digits (seconds since 1973 up to nanoseconds), with an optional fraction.
 static TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| re(r"^\d{9,19}(\.\d+)?$"));
+/// An ISO 8601 date, optionally followed by a time.
 static DATE: LazyLock<Regex> = LazyLock::new(|| re(r"^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}.*)?$"));
+/// A hex color (3, 4, 6 or 8 digits) or a CSS color function such as `rgb(…)` or `oklch(…)`.
 static COLOR: LazyLock<Regex> = LazyLock::new(|| re(r"(?i)^(#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|(rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(.+\))$"));
+/// One cron field: numbers, `* / , - ? L W #` and month or day names.
 static CRON_FIELD: LazyLock<Regex> = LazyLock::new(|| re(r"^[0-9*/,?LW#A-Za-z-]+$"));
+/// A percent-encoded byte, e.g. `%20`.
 static PERCENT: LazyLock<Regex> = LazyLock::new(|| re(r"%[0-9A-Fa-f]{2}"));
+/// A named or numeric HTML entity, e.g. `&amp;`, `&#169;` or `&#xA9;`.
 static ENTITY: LazyLock<Regex> = LazyLock::new(|| re(r"&(#\d+|#x[0-9A-Fa-f]+|[A-Za-z]+);"));
+/// At least four hex bytes, optionally separated by spaces or colons.
 static HEX: LazyLock<Regex> = LazyLock::new(|| re(r"^([0-9A-Fa-f]{2}[\s:]?){4,}$"));
+/// At least 8 characters of standard or URL-safe Base64, with optional padding.
 static BASE64: LazyLock<Regex> = LazyLock::new(|| re(r"^[A-Za-z0-9+/_-]{8,}={0,2}$"));
+/// An identifier of two words or more: `snake_case`, `kebab-case`, `dot.case`, `camelCase` or `PascalCase`.
 static IDENTIFIER: LazyLock<Regex> = LazyLock::new(|| re(r"^[A-Za-z][A-Za-z0-9]*([_.-][A-Za-z0-9]+)+$|^[a-z]+([A-Z][a-z0-9]*)+$|^([A-Z][a-z0-9]+){2,}$"));
 
+/// Words that start an SQL statement (compared in uppercase).
 const SQL_KEYWORDS: [&str; 8] = ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP", "WITH"];
 
 /// The tool that best handles `text`, or `None` when nothing specific is recognized.
 pub fn detect(text: &str) -> Option<Detected> {
     let t = text.trim();
-    let found = |tool, what| Some(Detected { tool, what });
-    let one_word = !t.is_empty() && !t.contains(char::is_whitespace);
     if t.is_empty() { return None; }
+    let found = |tool, what| Some(Detected { tool, what });
+    let one_word = !t.contains(char::is_whitespace);
+    // From the most to the least specific format: the order matters, since a text
+    // can match several patterns (e.g. a UUID without hyphens is also hex).
     if JWT.is_match(t) { return found("JWT Debugger", "a JWT"); }
     if t.contains("-----BEGIN CERTIFICATE-----") { return found("Certificate Decoder (X.509)", "a certificate"); }
     if t.starts_with("data:image/") { return found("Base64 Image Encode/Decode", "an image data URI"); }
@@ -39,10 +60,12 @@ pub fn detect(text: &str) -> Option<Detected> {
     if one_word && (t.parse::<ipnet::IpNet>().is_ok() || t.parse::<std::net::IpAddr>().is_ok()) {
         return found("IP Subnet Calculator", if t.contains('/') { "a CIDR block" } else { "an IP address" });
     }
-    if ULID.is_match(t) && t.chars().any(|c| c.is_ascii_digit()) { return found("UUID/ULID Generate/Decode", "a ULID"); }
+    if ULID.is_match(t) { return found("UUID/ULID Generate/Decode", "a ULID"); }
     if TIMESTAMP.is_match(t) { return found("Unix Time Converter", "a timestamp"); }
     if DATE.is_match(t) { return found("Unix Time Converter", "a date"); }
     if COLOR.is_match(t) { return found("Color Converter", "a color"); }
+    // 5 to 7 fields with at least one `*` or `/` (so that a five-word sentence
+    // is not taken), and croner must accept it.
     let fields: Vec<&str> = t.split_whitespace().collect();
     if (5..=7).contains(&fields.len()) && fields.iter().all(|f| CRON_FIELD.is_match(f)) && fields.iter().any(|f| f.contains(['*', '/']))
         && t.parse::<croner::Cron>().is_ok() {
@@ -54,6 +77,7 @@ pub fn detect(text: &str) -> Option<Detected> {
     if SQL_KEYWORDS.contains(&first.as_str()) && fields.len() > 1 { return found("SQL Formatter", "SQL"); }
     if one_word && PERCENT.is_match(t) { return found("URL Encode/Decode", "URL-encoded text"); }
     if ENTITY.is_match(t) { return found("HTML Entity Encode/Decode", "HTML entities"); }
+    // Hex needs both a digit and a letter, so plain numbers and words are left alone.
     if HEX.is_match(t) && t.chars().any(|c| c.is_ascii_digit()) && t.chars().any(|c| c.is_ascii_alphabetic()) { return found("Hex \u{2194} ASCII", "hex bytes"); }
     if BASE64.is_match(t) && t.len().is_multiple_of(4) && decodes_to_text(t) { return found("Base64 String Encode/Decode", "Base64"); }
     if IDENTIFIER.is_match(t) { return found("String Case Converter", "an identifier"); }

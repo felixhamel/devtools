@@ -1,24 +1,41 @@
-//! QR Code Reader/Generator.
+//! QR Code Reader/Generator: renders text as a QR code image, and decodes QR
+//! codes from a copied image, an image file or a dropped one.
 use eframe::egui;
 use super::{Category, Tool};
 use crate::ui::{self, icon};
 
-/// Pixels per QR module in the generated image, and the quiet zone width in modules.
+/// Pixels per QR module (one black or white square) in the generated image.
 const SCALE: usize = 8;
+/// Width of the white border around the code, in modules (4 is what the standard asks for).
 const QUIET: usize = 4;
+/// Largest side of the preview, in points.
+const MAX_PREVIEW_SIDE: f32 = 420.0;
 
 /// Generates a QR code live from the text, and reads QR codes from a pasted or dropped image.
 #[derive(Default)]
-pub struct Qr { text: String, rendered: Option<String>, image: Option<Rgba>, texture: Option<egui::TextureHandle>, error: String }
+pub struct Qr {
+    /// The QR code's content.
+    text: String,
+    /// The text `image` was generated from, so it is only regenerated when `text` changes.
+    rendered: Option<String>,
+    /// The generated code, kept for "Copy image".
+    image: Option<Rgba>,
+    /// The generated code, uploaded for display.
+    texture: Option<egui::TextureHandle>,
+    error: String,
+}
 
+/// An 8-bit RGBA image, row by row: the layout of `arboard` images and `egui` textures.
 #[derive(Clone)]
 struct Rgba { width: usize, height: usize, pixels: Vec<u8> }
 
 impl Qr {
+    /// Decodes the QR code in `image` into the text (which regenerates the code shown).
     fn read(&mut self, image: &Rgba) {
         match decode(image) { Ok(text) => { self.text = text; self.error.clear(); } Err(e) => self.error = e }
     }
 
+    /// Opens an image file and decodes the QR code in it.
     fn read_file(&mut self, path: &std::path::Path) {
         match image::open(path) {
             Ok(img) => { let img = img.into_rgba8(); let (w, h) = img.dimensions(); self.read(&Rgba { width: w as usize, height: h as usize, pixels: img.into_raw() }); }
@@ -53,6 +70,8 @@ impl Tool for Qr {
                     }
                     Err(e) => self.error = e,
                 }
+            } else {
+                self.error.clear();
             }
         }
         ui::description(ui, "Type text to generate a QR code. To read one, paste an image (e.g. a screenshot) or drop an image file on the window.");
@@ -70,7 +89,7 @@ impl Tool for Qr {
                     }
                 }
                 if ui::icon_only(ui, icon::FOLDER_OPEN, "Read a QR code from an image file") {
-                    if let Some(path) = ui::pick_files("Open an image with a QR code", &["png", "jpg", "jpeg", "webp", "bmp"]).first() { self.read_file(path); }
+                    if let Some(path) = ui::pick_files("Open an image with a QR code", &ui::IMAGE_EXTENSIONS).first() { self.read_file(path); }
                 }
             });
             ui::fill_editor(left, "content", &mut self.text, "https://example.com");
@@ -85,7 +104,7 @@ impl Tool for Qr {
             ui::error_label(right, &self.error);
             ui::preview_frame(right, |ui| {
                 if let Some(texture) = &self.texture {
-                    let side = ui.available_width().min(ui.available_height()).min(420.0);
+                    let side = ui.available_width().min(ui.available_height()).min(MAX_PREVIEW_SIDE);
                     ui::center_vertically(ui, side);
                     ui.vertical_centered(|ui| { ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(side, side))); });
                 }
@@ -101,13 +120,14 @@ impl Tool for Qr {
     fn set_input(&mut self, text: &str) { self.text = text.to_owned(); }
 }
 
-/// Renders `text` as a black-on-white QR code with a quiet zone, `SCALE` px per module.
+/// Renders `text` as a black-on-white QR code with a quiet zone, [`SCALE`] px per module.
 fn encode(text: &str) -> Result<Rgba, String> {
     let code = qrcode::QrCode::new(text.as_bytes()).map_err(|e| format!("Cannot encode: {e}"))?;
     let modules = code.width();
     let colors = code.to_colors();
     let side = (modules + 2 * QUIET) * SCALE;
     let mut pixels = vec![255u8; side * side * 4];
+    // `colors` lists the modules row by row; paint each dark one as a SCALE×SCALE square.
     for (i, color) in colors.iter().enumerate() {
         if *color != qrcode::Color::Dark { continue; }
         let (mx, my) = (i % modules + QUIET, i / modules + QUIET);
@@ -126,7 +146,7 @@ fn decode(image: &Rgba) -> Result<String, String> {
     let luma = |x: usize, y: usize| {
         let p = (y * image.width + x) * 4;
         let (r, g, b, a) = (image.pixels[p] as u32, image.pixels[p + 1] as u32, image.pixels[p + 2] as u32, image.pixels[p + 3] as u32);
-        // Treat transparent pixels as white.
+        // Rec. 601 luma, blended over white so transparent pixels count as white.
         let l = (r * 299 + g * 587 + b * 114) / 1000;
         (l * a / 255 + (255 - a)) as u8
     };

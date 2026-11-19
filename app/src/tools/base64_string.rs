@@ -1,29 +1,41 @@
 //! Base64 Encode/Decode for text and files, with the URL-safe alphabet and
 //! optional padding; binary results are shown as a hex dump.
+use std::fmt::Write;
 use base64::{engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD}, Engine};
 use eframe::egui;
 use super::{encoding::decode_base64, Category, Tool};
 use crate::ui::{self, icon, theme, TextIo};
 
+/// Example for the "Sample" button (the emoji shows that UTF-8 survives).
 const SAMPLE: &str = "Hello, DevUtils! 👋";
 /// Larger binary results are cut in the hex dump.
 const DUMP_LIMIT: usize = 64 * 1024;
+/// Index of the "Encode" action in the input pane ("Decode" is 1).
+const ENCODE: usize = 0;
 
+/// The `hexdump -C` layout: offset, 16 bytes in two groups of 8, and the
+/// printable ASCII characters (others as `.`):
 /// `00000000  48 65 6c 6c 6f 2c 20 44  65 76 55 74 69 6c 73 21  |Hello, DevUtils!|`
 fn hex_dump(bytes: &[u8]) -> String {
+    const ROW: usize = 16;
     let mut out = String::new();
-    for (row, chunk) in bytes.chunks(16).enumerate() {
-        let hex: Vec<String> = (0..16).map(|i| chunk.get(i).map_or("  ".into(), |b| format!("{b:02x}"))).collect();
+    for (row, chunk) in bytes.chunks(ROW).enumerate() {
+        // The last row is padded with blanks so its ASCII column lines up.
+        let hex: Vec<String> = (0..ROW).map(|i| chunk.get(i).map_or("  ".into(), |b| format!("{b:02x}"))).collect();
         let ascii: String = chunk.iter().map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' }).collect();
-        out.push_str(&format!("{:08x}  {}  {}  |{ascii}|\n", row * 16, hex[..8].join(" "), hex[8..].join(" ")));
+        let _ = writeln!(out, "{:08x}  {}  {}  |{ascii}|", row * ROW, hex[..ROW / 2].join(" "), hex[ROW / 2..].join(" "));
     }
     out
 }
 
+/// The Base64 String Encode/Decode tool.
 #[derive(Default)]
 pub struct Base64String {
+    /// Input and output text; `io.active` is the action, see [`ENCODE`].
     io: TextIo,
+    /// Encode with `-` and `_` instead of `+` and `/` (decoding accepts both).
     url_safe: bool,
+    /// Encode without the trailing `=` (decoding accepts both).
     no_padding: bool,
     /// A dropped file to encode instead of the text: name and contents.
     file: Option<(String, Vec<u8>)>,
@@ -32,6 +44,7 @@ pub struct Base64String {
 }
 
 impl Base64String {
+    /// The encoder for the URL-safe and padding options.
     fn engine(&self) -> &'static base64::engine::GeneralPurpose {
         match (self.url_safe, self.no_padding) {
             (false, false) => &STANDARD,
@@ -41,9 +54,11 @@ impl Base64String {
         }
     }
 
+    /// Encodes the dropped file or the input text, or decodes the input.
+    /// Decoded bytes that are not UTF-8 are shown as a hex dump.
     fn run(&mut self) {
         self.note.clear();
-        if self.io.active == 0 {
+        if self.io.active == ENCODE {
             let bytes = match &self.file { Some((_, bytes)) => bytes.as_slice(), None => self.io.input.as_bytes() };
             self.io.apply(Ok(self.engine().encode(bytes)));
             return;
@@ -54,7 +69,8 @@ impl Base64String {
                 Ok(text) => self.io.apply(Ok(text)),
                 Err(e) => {
                     let bytes = e.into_bytes();
-                    self.note = format!("Binary data ({} bytes), shown as a hex dump{}", bytes.len(), if bytes.len() > DUMP_LIMIT { " of the first 64 KB" } else { "" });
+                    let cut = if bytes.len() > DUMP_LIMIT { format!(" of the first {} KB", DUMP_LIMIT / 1024) } else { String::new() };
+                    self.note = format!("Binary data ({} bytes), shown as a hex dump{cut}", bytes.len());
                     self.io.apply(Ok(hex_dump(&bytes[..bytes.len().min(DUMP_LIMIT)])));
                 }
             },
@@ -69,18 +85,18 @@ impl Tool for Base64String {
     fn category(&self) -> Category { Category::Encoding }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
+        // The ⇄ menu leaves out the tool it is drawn in.
+        let tool_name = self.name();
         let area = ui.available_rect_before_wrap();
         // A file dropped on the window is encoded as is.
         for file in ui.ctx().input(|i| i.raw.dropped_files.clone()) {
-            let Some(path) = &file.path else { continue };
-            match std::fs::read(path) {
-                Ok(bytes) => {
-                    let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
-                    self.file = Some((name, bytes));
-                    self.io.active = 0;
+            match ui::read_dropped(&file) {
+                Ok(file) => {
+                    self.file = Some(file);
+                    self.io.active = ENCODE;
                     self.run();
                 }
-                Err(e) => self.io.error = format!("Cannot read {}: {e}", path.display()),
+                Err(e) => self.io.error = e,
             }
         }
         ui::description(ui, "Encode text or a file dropped on the window, or decode Base64 (line breaks, missing padding and the URL-safe alphabet are accepted).");
@@ -102,7 +118,7 @@ impl Tool for Base64String {
             // Typing replaces a dropped file.
             if self.file.is_some() && self.io.input.len() != input_before { self.file = None; run_now = true; }
             let reuse = self.io.output_pane(right, |ui, output| {
-                let reuse = super::reuse_menu(ui, output, "Base64 String Encode/Decode");
+                let reuse = super::reuse_menu(ui, output, tool_name);
                 ui.separator();
                 run_now |= ui.checkbox(&mut self.url_safe, "URL-safe").on_hover_text("Use - and _ instead of + and /").changed();
                 run_now |= ui.checkbox(&mut self.no_padding, "No padding").on_hover_text("Omit the trailing = characters").changed();
@@ -118,7 +134,7 @@ impl Tool for Base64String {
     fn load_sample(&mut self) {
         self.io.input = SAMPLE.into();
         self.file = None;
-        self.io.active = 0;
+        self.io.active = ENCODE;
         self.run();
     }
 

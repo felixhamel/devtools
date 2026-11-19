@@ -1,15 +1,17 @@
-//! Number base conversion.
+//! Number Base Converter: an integer in decimal, hex, octal or binary, shown
+//! in all four bases.
 use super::{Category, TextTool, Tool};
 use crate::ui::icon;
 
+/// The Number Base Converter tool.
 pub fn number_base() -> Box<dyn Tool> {
     Box::new(TextTool::new("Number Base Converter", icon::CALCULATOR, Category::Code, vec![("Convert", number_bases)])
-        .describe("Enter an integer: decimal, or prefixed with 0x (hex), 0o (octal) or 0b (binary). Underscores and a leading - are allowed.").sample(r#"0xFF"#).key_value_output())
+        .describe("Enter an integer: decimal, or prefixed with 0x (hex), 0o (octal) or 0b (binary). Underscores and a leading - are allowed.").sample("0xFF").key_value_output())
 }
 
 /// Parses `[-](0x|0o|0b)?digits` (any case, `_` separators allowed) and prints it in the four bases.
 fn number_bases(input: &str) -> Result<String, String> {
-    let cleaned: String = input.chars().filter(|c| *c != '_' && !c.is_whitespace()).collect::<String>().to_ascii_lowercase();
+    let cleaned: String = input.chars().filter(|c| *c != '_' && !c.is_whitespace()).map(|c| c.to_ascii_lowercase()).collect();
     let (negative, body) = match cleaned.strip_prefix('-') { Some(rest) => (true, rest), None => (false, cleaned.as_str()) };
     let (radix, digits) = [("0x", 16), ("0o", 8), ("0b", 2)].iter()
         .find_map(|(prefix, radix)| body.strip_prefix(prefix).map(|d| (*radix, d)))

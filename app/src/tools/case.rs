@@ -5,6 +5,7 @@ use unicode_normalization::{char::is_combining_mark, UnicodeNormalization};
 use super::{text::{capitalize, words}, Category, Tool};
 use crate::ui::{self, icon};
 
+/// The example: an acronym, a dash, an accented word and a number.
 const SAMPLE: &str = "Parse HTTP response — été 2024";
 
 /// Removes accents (é → e) and drops what is left outside ASCII, for slugs.
@@ -14,6 +15,7 @@ fn ascii_fold(text: &str) -> String {
 
 /// Every conversion of `input`, in display order: (name, result).
 fn conversions(input: &str) -> Vec<(&'static str, String)> {
+    // Lowercase words, whatever the input's style.
     let parts = words(input);
     let title: Vec<String> = parts.iter().map(|w| capitalize(w)).collect();
     let camel = parts.first().cloned().unwrap_or_default() + &title.iter().skip(1).cloned().collect::<String>();
@@ -33,10 +35,17 @@ fn conversions(input: &str) -> Vec<(&'static str, String)> {
     ]
 }
 
+/// The String Case Converter tool: the input on the left, every conversion on the right.
 #[derive(Default)]
-pub struct CaseConverter { input: String, error: String, results: Vec<(&'static str, String)> }
+pub struct CaseConverter {
+    input: String,
+    error: String,
+    /// (convention, converted text), as returned by [`conversions`]; empty for a blank input.
+    results: Vec<(&'static str, String)>,
+}
 
 impl CaseConverter {
+    /// Converts the input again after it changed.
     fn update(&mut self) {
         self.results = if self.input.trim().is_empty() { Vec::new() } else { conversions(&self.input) };
     }

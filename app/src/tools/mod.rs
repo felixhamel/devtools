@@ -35,13 +35,16 @@ mod unix_time;
 mod url_parser;
 mod x509;
 
-/// Sidebar groups, shown in the order of [`Category::ALL`].
+/// Sidebar groups, shown in the order of [`Category::ALL`]; see
+/// [`Category::label`] for what each one holds.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Category { Date, Data, Network, Encoding, Security, Text, Compare, Code }
 
 impl Category {
+    /// Every category, in sidebar order.
     pub const ALL: [Category; 8] = [Category::Date, Category::Data, Category::Network, Category::Encoding, Category::Security, Category::Text, Category::Compare, Category::Code];
 
+    /// The group's heading in the sidebar, on the home screen and in the ⇄ menu.
     pub fn label(self) -> &'static str {
         match self {
             Category::Date => "Date & scheduling",
@@ -71,11 +74,14 @@ impl Category {
     }
 }
 
+/// One tool of the app. It holds its own state, which lives as long as the app.
 pub trait Tool {
     /// Shown in the sidebar, the title bar and matched by the search box.
+    /// It also identifies the tool, e.g. in a [`SendRequest`].
     fn name(&self) -> &'static str;
-    /// Icon glyph shown in the sidebar, e.g. `icon::CLOCK` (see `ui::icon`).
+    /// Icon glyph shown in the sidebar, e.g. `icon::CLOCK` (see [`ui::icon`]).
     fn icon(&self) -> &'static str;
+    /// The sidebar group the tool is listed in.
     fn category(&self) -> Category;
     /// Draws the tool below the title bar. Called every frame while the tool is selected.
     fn ui(&mut self, ui: &mut egui::Ui);
@@ -99,10 +105,16 @@ struct Target { name: &'static str, icon: &'static str, category: Category }
 struct Directory(Vec<Target>);
 
 /// "Send this text to that tool", picked in a ⇄ menu and carried out by the app.
-#[derive(Clone)]
-pub struct SendRequest { pub target: &'static str, pub text: String }
+#[derive(Clone, Default)]
+pub struct SendRequest {
+    /// The receiving tool's [`Tool::name`].
+    pub target: &'static str,
+    pub text: String,
+}
 
+/// Where the [`Directory`] is kept in egui's memory.
 fn directory_id() -> egui::Id { egui::Id::new("devutils-tool-directory") }
+/// Where a pending [`SendRequest`] is kept in egui's memory until the app takes it.
 fn request_id() -> egui::Id { egui::Id::new("devutils-send-request") }
 
 /// Makes the list of tools available to the ⇄ menus.
@@ -114,11 +126,7 @@ pub fn publish_directory(ctx: &egui::Context, tools: &[Box<dyn Tool>]) {
 
 /// The pending "send to tool" request, if a ⇄ menu item was clicked this frame.
 pub fn take_send_request(ctx: &egui::Context) -> Option<SendRequest> {
-    ctx.data_mut(|d| {
-        let request = d.get_temp::<SendRequest>(request_id());
-        if request.is_some() { d.remove::<SendRequest>(request_id()); }
-        request
-    })
+    ctx.data_mut(|d| d.remove_temp::<SendRequest>(request_id()))
 }
 
 /// The ⇄ menu next to an output: "Use as input here" (returns true) or send
@@ -161,16 +169,21 @@ pub struct TextTool {
     name: &'static str,
     icon: &'static str,
     category: Category,
+    /// One-line explanation shown under the title.
     description: &'static str,
+    /// Button label and transform of each action; the first is the primary one.
     actions: Vec<(&'static str, Transform)>,
     /// Example input for the "Sample" button.
     sample: Option<&'static str>,
     /// Highlighting of the output for each action (defaults to the input's).
     output_syntax: Vec<Option<&'static str>>,
+    /// The input, the output and the selected action.
     io: TextIo,
 }
 
 impl TextTool {
+    /// A tool with these `(button label, transform)` actions, the first being the
+    /// primary one. The builder methods below add a description, a sample and highlighting.
     pub fn new(name: &'static str, icon: &'static str, category: Category, actions: Vec<(&'static str, Transform)>) -> Self {
         let output_syntax = vec![None; actions.len()];
         Self { name, icon, category, description: "Paste or type your input, then choose an action.", actions, sample: None, output_syntax, io: TextIo::default() }

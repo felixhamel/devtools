@@ -8,23 +8,40 @@ use crate::ui::{self, icon, theme, TextIo};
 /// ULID alphabet (Crockford's Base32: no I, L, O, U).
 const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
+/// The kinds of identifier the tool generates.
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum Kind { UuidV4, UuidV7, Ulid }
+enum Kind {
+    /// Random UUID.
+    UuidV4,
+    /// Time-ordered UUID: Unix milliseconds, then random bits.
+    UuidV7,
+    /// Time-ordered, 26 Crockford Base32 characters.
+    Ulid,
+}
 
 /// How UUIDs are written. ULIDs are always uppercase (their canonical form).
 #[derive(Clone, Copy, Default, PartialEq)]
-struct Format { uppercase: bool, no_hyphens: bool }
+struct Format {
+    /// Hex digits `A`–`F` instead of `a`–`f`.
+    uppercase: bool,
+    /// 32 bare hex digits instead of the `8-4-4-4-12` groups.
+    no_hyphens: bool,
+}
 
+/// The current Unix time in milliseconds, which v7 UUIDs and ULIDs store in 48 bits.
 fn now_millis() -> Result<u64, String> {
     let millis = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_millis();
     u64::try_from(millis).ok().filter(|m| *m < 1 << 48).ok_or_else(|| "The current time does not fit in 48 bits".into())
 }
 
+/// Writes 16 bytes as a UUID in the given [`Format`].
 fn format_uuid(bytes: [u8; 16], format: Format) -> String {
-    let h: String = bytes.iter().map(|b| if format.uppercase { format!("{b:02X}") } else { format!("{b:02x}") }).collect();
+    let value = u128::from_be_bytes(bytes);
+    let h = if format.uppercase { format!("{value:032X}") } else { format!("{value:032x}") };
     if format.no_hyphens { h } else { format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..]) }
 }
 
+/// Writes 16 bytes as a ULID: 26 Base32 digits, 5 bits each, most significant first.
 fn encode_ulid(bytes: [u8; 16]) -> String {
     let mut value = u128::from_be_bytes(bytes);
     let mut encoded = [b'0'; 26];
@@ -48,6 +65,7 @@ fn build(kind: Kind, millis: u64, mut bytes: [u8; 16], format: Format) -> String
     }
 }
 
+/// A new identifier of `kind`, stamped with the current time.
 fn generate(kind: Kind, format: Format) -> Result<String, String> {
     Ok(build(kind, now_millis()?, random_bytes::<16>()?, format))
 }
@@ -55,21 +73,25 @@ fn generate(kind: Kind, format: Format) -> Result<String, String> {
 /// Accepts `xxxxxxxx-xxxx-…`, 32 hex digits, `{…}` and `urn:uuid:…`.
 fn parse_uuid(text: &str) -> Option<[u8; 16]> {
     let s = text.trim().trim_start_matches("urn:uuid:").trim_start_matches('{').trim_end_matches('}');
+    // Hyphens are dropped only when all four sit where the `8-4-4-4-12` groups put them.
     let hex: String = if s.len() == 36 && [8, 13, 18, 23].iter().all(|&i| s.as_bytes().get(i) == Some(&b'-')) { s.replace('-', "") } else { s.to_owned() };
     if hex.len() != 32 || !hex.chars().all(|c| c.is_ascii_hexdigit()) { return None; }
     Some(u128::from_str_radix(&hex, 16).ok()?.to_be_bytes())
 }
 
+/// The 128-bit value of a ULID (case-insensitive). The caller checks the length.
 fn parse_ulid(text: &str) -> Result<u128, String> {
     let mut value = 0u128;
     for (i, c) in text.bytes().enumerate() {
         let digit = CROCKFORD.iter().position(|&x| x == c.to_ascii_uppercase()).ok_or("Invalid ULID character")? as u128;
+        // 26 digits hold 130 bits: the first one may only use the low 3.
         if i == 0 && digit > 7 { return Err("ULID exceeds 128 bits".into()); }
         value = (value << 5) | digit;
     }
     Ok(value)
 }
 
+/// The `Timestamp:` report line for Unix `millis`: ISO 8601 and relative to now.
 fn timestamp_line(millis: u64) -> String {
     match DateTime::from_timestamp_millis(millis as i64) {
         Some(t) => format!("Timestamp: {} ({})", t.to_rfc3339_opts(SecondsFormat::Millis, true), relative(t - Utc::now())),
@@ -80,7 +102,8 @@ fn timestamp_line(millis: u64) -> String {
 /// Describes one ULID or UUID as "Key: value" lines.
 fn decode_identifier(input: &str) -> Result<String, String> {
     let s = input.trim();
-    if s.len() == 26 && s.is_ascii() && parse_uuid(s).is_none() {
+    // 26 characters cannot be a UUID: try it as a ULID (48-bit time, 80 random bits).
+    if s.len() == 26 && s.is_ascii() {
         let value = parse_ulid(s)?;
         return Ok(format!("Type: ULID\n{}\nRandomness: {:020X}", timestamp_line((value >> 80) as u64), value & ((1u128 << 80) - 1)));
     }
@@ -88,6 +111,7 @@ fn decode_identifier(input: &str) -> Result<String, String> {
     let value = u128::from_be_bytes(bytes);
     if value == 0 { return Ok("Type: Nil UUID (all zeros)".into()); }
     if value == u128::MAX { return Ok("Type: Max UUID (all ones)".into()); }
+    // The version is the high nibble of byte 6; the variant the high bits of byte 8.
     let version = bytes[6] >> 4;
     let variant = match bytes[8] {
         b if b & 0x80 == 0 => "NCS (reserved)",
@@ -122,16 +146,25 @@ fn decode_all(input: &str) -> Result<String, String> {
     }
 }
 
-/// `last` is the kind generated last, highlighted as the primary button.
-pub struct Identifiers { io: TextIo, count: usize, format: Format, last: Kind }
+/// The UUID/ULID tool: identifiers in the input, their decoded details in the output.
+pub struct Identifiers {
+    io: TextIo,
+    /// How many identifiers a Generate button makes.
+    count: usize,
+    format: Format,
+    /// The kind generated last, highlighted as the primary button.
+    last: Kind,
+}
 
 impl Default for Identifiers {
     fn default() -> Self { Self { io: TextIo { output_syntax: Some(ui::KEY_VALUE), ..TextIo::default() }, count: 1, format: Format::default(), last: Kind::UuidV4 } }
 }
 
 impl Identifiers {
+    /// Recomputes the output from the input.
     fn decode(&mut self) { self.io.apply(decode_all(&self.io.input)); }
 
+    /// Replaces the input with `count` new identifiers of `kind` and decodes them.
     fn generate(&mut self, kind: Kind) {
         self.last = kind;
         match (0..self.count).map(|_| generate(kind, self.format)).collect::<Result<Vec<_>, _>>() {
@@ -155,6 +188,8 @@ impl Tool for Identifiers {
     fn category(&self) -> Category { Category::Security }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
+        // The ⇄ menu leaves out the tool it is drawn in.
+        let tool_name = self.name();
         ui::description(ui, "Generate UUID v4 (random), UUID v7 (time-sortable) or ULID, or paste identifiers (one per line) to decode them.");
         ui.add_space(10.0);
         ui::split(ui, |left, right| {
@@ -178,7 +213,7 @@ impl Tool for Identifiers {
             left.add_space(6.0);
             changed |= ui::fill_editor(left, "input", &mut self.io.input, "Paste UUIDs or ULIDs, one per line…").changed();
             if reformat { self.reformat(); } else if changed { self.decode(); }
-            if self.io.output_pane(right, |ui, output| super::reuse_menu(ui, output, "UUID/ULID Generate/Decode")) {
+            if self.io.output_pane(right, |ui, output| super::reuse_menu(ui, output, tool_name)) {
                 self.io.input = std::mem::take(&mut self.io.output);
                 self.decode();
             }
@@ -194,7 +229,7 @@ impl Tool for Identifiers {
     fn accepts_input(&self) -> bool { true }
 
     fn set_input(&mut self, text: &str) {
-        self.io.input = text.trim().to_owned();
+        text.trim().clone_into(&mut self.io.input);
         self.decode();
     }
 }
@@ -215,7 +250,7 @@ mod tests {
         // The ULID spec example "01ARZ3NDEK…" encodes 1469922850259 ms.
         let ulid = build(Kind::Ulid, 1_469_922_850_259, [0; 16], Format::default());
         assert_eq!(&ulid[..10], "01ARZ3NDEK");
-        assert!(generate(Kind::UuidV7, Format::default()).unwrap().chars().nth(14) == Some('7'));
+        assert_eq!(generate(Kind::UuidV7, Format::default()).unwrap().chars().nth(14), Some('7'));
     }
 
     #[test]

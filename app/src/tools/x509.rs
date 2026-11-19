@@ -2,6 +2,7 @@
 use super::{encoding::decode_base64, Category, TextTool, Tool};
 use crate::ui::icon;
 
+/// Certificate Decoder (X.509): one "Key: value" report per certificate.
 pub fn certificate() -> Box<dyn Tool> {
     Box::new(TextTool::new("Certificate Decoder (X.509)", icon::CERTIFICATE, Category::Security, vec![("Decode", decode_certificates)])
         .describe("Paste one or more PEM certificates (-----BEGIN CERTIFICATE-----) or Base64 DER.").sample(SAMPLE_PEM).key_value_output())
@@ -32,6 +33,7 @@ z9j1itOwfIKkpDVQMQI6vgfgw+/uOwQlETpzJvMRaawtnK0=
 
 /// Accepts one or more PEM blocks, or a single Base64-encoded DER certificate.
 fn decode_certificates(src: &str) -> Result<String, String> {
+    // PEM is Base64 DER between "-----BEGIN …-----" and "-----END …-----" lines.
     let ders: Vec<Vec<u8>> = if src.contains("-----BEGIN") {
         x509_parser::pem::Pem::iter_from_buffer(src.as_bytes())
             .map(|pem| pem.map(|p| p.contents).map_err(|e| format!("Invalid PEM: {e}")))
@@ -52,6 +54,7 @@ fn oid_name(oid: &x509_parser::der_parser::oid::Oid) -> String {
     x509_parser::objects::oid2sn(oid, x509_parser::objects::oid_registry()).map_or_else(|_| oid.to_id_string(), str::to_string)
 }
 
+/// Uppercase hex bytes separated by colons, as `openssl x509 -fingerprint` prints them.
 fn fingerprint(digest: &[u8]) -> String { digest.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":") }
 
 /// The human-readable summary of one DER certificate.
@@ -60,6 +63,7 @@ fn describe(der: &[u8]) -> Result<String, String> {
     use x509_parser::{extensions::GeneralName, public_key::PublicKey};
     let (_, cert) = x509_parser::parse_x509_certificate(der).map_err(|e| format!("Invalid certificate: {e}"))?;
     let validity = cert.validity();
+    // `time_to_expiration` is `None` both before `not_before` and after `not_after`.
     let status = match validity.time_to_expiration() {
         Some(left) => format!("valid, expires in {} days", left.whole_days()),
         None if validity.not_before.timestamp() > chrono::Utc::now().timestamp() => "not valid yet".into(),
@@ -76,6 +80,7 @@ fn describe(der: &[u8]) -> Result<String, String> {
             GeneralName::DNSName(d) => format!("DNS:{d}"),
             GeneralName::RFC822Name(e) => format!("Email:{e}"),
             GeneralName::URI(u) => format!("URI:{u}"),
+            // The raw address bytes: 4 for IPv4, 16 for IPv6.
             GeneralName::IPAddress(ip) => match ip.len() {
                 4 => format!("IP:{}", std::net::Ipv4Addr::from(<[u8; 4]>::try_from(*ip).unwrap())),
                 16 => format!("IP:{}", std::net::Ipv6Addr::from(<[u8; 16]>::try_from(*ip).unwrap())),
@@ -89,6 +94,7 @@ fn describe(der: &[u8]) -> Result<String, String> {
         format!("Subject: {}", cert.subject()),
         format!("Issuer: {}", cert.issuer()),
         format!("Serial number: {}", cert.raw_serial_as_string().to_uppercase()),
+        // Stored 0-based: v3 certificates have version 2.
         format!("Version: {}", cert.version().0 + 1),
         format!("Valid from: {}", validity.not_before),
         format!("Valid until: {}", validity.not_after),

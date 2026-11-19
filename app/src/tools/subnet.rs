@@ -1,17 +1,23 @@
 //! IP Subnet Calculator: details of an IPv4 or IPv6 CIDR block (with the
 //! addresses AWS reserves in each VPC subnet), splitting it into smaller
 //! subnets, and checking where an address or another block falls.
+use std::fmt::Write as _;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use eframe::egui;
 use ipnet::IpNet;
 use super::{Category, Tool};
 use crate::ui::{self, icon, theme};
 
+/// The example: a typical VPC block…
 const SAMPLE: &str = "10.0.0.0/16";
+/// …an address to locate in it…
 const SAMPLE_CHECK: &str = "10.0.37.12";
+/// …and the prefix length it is split into.
 const SAMPLE_SPLIT: u8 = 20;
 /// Subnets listed at most (their total is always shown).
 const MAX_LISTED: usize = 1024;
+/// Above this many subnets, the map shows one bar with their count instead of a segment each.
+const MAX_SEGMENTS: u128 = 256;
 /// Split sizes offered: at most this many bits more than the block (65,536 subnets).
 const MAX_SPLIT_BITS: u8 = 16;
 /// Prefix lengths AWS accepts for an IPv4 VPC or subnet.
@@ -33,6 +39,8 @@ fn parse(input: &str) -> Result<IpNet, String> {
     let bits = if addr.is_ipv4() { 32 } else { 128 };
     let prefix = match mask {
         None => bits,
+        // `10.0.0.0 16` or `10.0.0.0/ 16`: a prefix length after a space.
+        Some(mask) if mask.parse::<u16>().is_ok_and(|n| n <= u16::from(bits)) => mask.parse().unwrap_or(bits),
         Some(mask) if mask.parse::<u16>().is_ok() => return Err(format!("The prefix length must be between 0 and {bits}")),
         Some(mask) => match (addr, mask.parse::<Ipv4Addr>()) {
             (IpAddr::V4(_), Ok(mask)) => ipnet::ipv4_mask_to_prefix(mask).map_err(|_| format!("{mask} is not a netmask: its 1 bits must all come first"))?,
@@ -42,14 +50,19 @@ fn parse(input: &str) -> Result<IpNet, String> {
     IpNet::new(addr, prefix).map_err(|_| invalid())
 }
 
+/// Bits in an address of the block's family: 32 or 128.
 fn bits(net: &IpNet) -> u8 { if matches!(net, IpNet::V4(_)) { 32 } else { 128 } }
 
+/// The address as a number, for offset arithmetic (IPv4 fits in the low 32 bits).
 fn to_u128(addr: IpAddr) -> u128 {
     match addr { IpAddr::V4(a) => u32::from(a) as u128, IpAddr::V6(a) => u128::from(a) }
 }
 
 /// Number of addresses in a block, or `None` for 2^128 (all of IPv6).
 fn size(net: &IpNet) -> Option<u128> { 1u128.checked_shl(u32::from(bits(net) - net.prefix_len())) }
+
+/// How many subnets with prefix length `prefix` the block holds.
+fn subnet_count(net: &IpNet, prefix: u8) -> u128 { 1u128 << (prefix - net.prefix_len()) }
 
 /// 65536 → "65,536".
 fn group(n: u128) -> String {
@@ -71,9 +84,11 @@ fn count_text(net: &IpNet) -> String {
     }
 }
 
+/// What an IPv4 address is used for: private, public, loopback…
 fn kind_v4(a: Ipv4Addr) -> &'static str {
     let [first, second, ..] = a.octets();
     if a.is_private() { "Private (RFC 1918)" }
+    // 100.64.0.0/10: first octet 100, second octet 64 to 127 (top bits 01).
     else if first == 100 && (second & 0xC0) == 64 { "Shared address space / carrier-grade NAT (RFC 6598)" }
     else if a.is_loopback() { "Loopback" }
     else if a.is_link_local() { "Link-local (e.g. 169.254.169.254, the instance metadata service)" }
@@ -83,6 +98,7 @@ fn kind_v4(a: Ipv4Addr) -> &'static str {
     else { "Public" }
 }
 
+/// What an IPv6 address is used for, from its first 16 bits.
 fn kind_v6(a: Ipv6Addr) -> &'static str {
     let first = a.segments()[0];
     if a.is_unspecified() { "Unspecified" }
@@ -111,10 +127,13 @@ fn report(net: &IpNet) -> String {
             lines.push(match v4.prefix_len() {
                 32 => "Usable hosts: 1 (a single address)".to_owned(),
                 31 => "Usable hosts: 2 (point-to-point link, RFC 3021)".to_owned(),
+                // The network and broadcast addresses are not hosts.
                 _ => format!("Usable hosts: {} ({} – {})", group(u128::from(last - first - 1)), ip(first + 1), ip(last - 1)),
             });
             lines.push(String::new());
             if AWS_SIZES.contains(&v4.prefix_len()) {
+                // AWS reserves the network address, +1 (VPC router), +2 (DNS),
+                // +3 (future use) and the broadcast address.
                 lines.push("AWS: valid VPC or subnet size (/16 to /28)".to_owned());
                 lines.push(format!("AWS usable: {} ({} – {})", group(u128::from(last - first) + 1 - AWS_RESERVED), ip(first + 4), ip(last - 1)));
                 lines.push(format!("AWS reserved: {}, {}, {}, {}, {}", ip(first), ip(first + 1), ip(first + 2), ip(first + 3), ip(last)));
@@ -133,7 +152,7 @@ fn report(net: &IpNet) -> String {
         IpNet::V6(v6) => {
             lines.push(format!("Range: {} – {}", v6.network(), v6.broadcast()));
             lines.push(format!("Addresses: {}", count_text(net)));
-            if v6.prefix_len() <= 64 { lines.push(format!("/64 subnets: {}", group(1u128 << (64 - v6.prefix_len())))); }
+            if v6.prefix_len() <= 64 { lines.push(format!("/64 subnets: {}", group(subnet_count(net, 64)))); }
             lines.push(format!("Netmask: {}", v6.netmask()));
             lines.push(format!("Expanded: {}", v6.network().segments().map(|s| format!("{s:04x}")).join(":")));
             lines.push(String::new());
@@ -160,14 +179,30 @@ fn usable_per_subnet(net: &IpNet, prefix: u8) -> Option<u128> {
 
 /// Where a checked address or block lies relative to the block.
 #[derive(Debug, PartialEq)]
-enum Relation { Same, Inside, Contains, Disjoint }
+enum Relation {
+    Same,
+    /// The other one is inside the block.
+    Inside,
+    /// The other one contains the whole block.
+    Contains,
+    /// No address in common.
+    Disjoint,
+}
 
+/// Where `other` lies relative to `net`, both taken as whole blocks.
 fn relation(net: &IpNet, other: &IpNet) -> Relation {
     let (a, b) = (net.trunc(), other.trunc());
     if a == b { Relation::Same }
     else if a.contains(&b) { Relation::Inside }
     else if b.contains(&a) { Relation::Contains }
     else { Relation::Disjoint }
+}
+
+/// Position of `subnet` among the block's subnets of its size: its offset in
+/// the block divided by the subnet size.
+fn index_of(net: &IpNet, subnet: &IpNet) -> u128 {
+    let offset = to_u128(subnet.network()) - to_u128(net.network());
+    offset >> (bits(net) - subnet.prefix_len())
 }
 
 /// Where the checked address or block lies.
@@ -180,6 +215,7 @@ struct Check {
     holder: Option<IpNet>,
 }
 
+/// The IP Subnet Calculator tool: a block, its details, an optional split and an address to check.
 #[derive(Default)]
 pub struct SubnetCalculator {
     input: String,
@@ -187,13 +223,17 @@ pub struct SubnetCalculator {
     check: String,
     /// Prefix length of the subnets to list, if splitting.
     split: Option<u8>,
+    /// The parsed block; `None` while the input is empty or invalid.
     net: Option<IpNet>,
     error: String,
+    /// The block's details, as `Key: value` lines.
     report: String,
+    /// The first [`MAX_LISTED`] subnets of the split.
     subnets: Vec<IpNet>,
 }
 
 impl SubnetCalculator {
+    /// Parses the input again and recomputes the details and the subnets.
     fn update(&mut self) {
         self.error.clear();
         self.report.clear();
@@ -204,7 +244,8 @@ impl SubnetCalculator {
             Ok(net) => {
                 self.report = report(&net);
                 // A split size only makes sense for smaller subnets of the same block.
-                self.split = self.split.filter(|&p| p > net.prefix_len() && p <= bits(&net));
+                // Same limits as the "Split into" choices, so the subnet count always fits.
+                self.split = self.split.filter(|&p| p > net.prefix_len() && p <= bits(&net) && p - net.prefix_len() <= MAX_SPLIT_BITS);
                 if let Some(prefix) = self.split { self.subnets = split(&net, prefix, MAX_LISTED); }
                 self.net = Some(net);
             }
@@ -219,17 +260,19 @@ impl SubnetCalculator {
         if text.is_empty() { return None; }
         let other = match parse(text) { Ok(other) => other, Err(e) => return Some(Check { verdict: Err(e), other: None, holder: None }) };
         let single = other.prefix_len() == bits(&other);
+        // With a split, the subnet holding `other` is its network truncated to the
+        // split's prefix, if it fits in one subnet and lies in the block.
         let holder = self.split.filter(|&p| p <= other.prefix_len() && net.trunc().contains(&other))
             .and_then(|p| IpNet::new(other.network(), p).ok()).map(|s| s.trunc());
         let result = match (relation(net, &other), single) {
             (Relation::Inside | Relation::Same, true) => (match holder {
-                Some(s) => format!("Inside · subnet #{} {s}", self.index_of(net, &s) + 1),
+                Some(s) => format!("Inside · subnet #{} {s}", index_of(net, &s) + 1),
                 None => "Inside this block".to_owned(),
             }, theme::ACCENT),
             (Relation::Disjoint, true) => ("Outside this block".to_owned(), theme::MUTED),
             (Relation::Same, false) => ("Same block: they overlap".to_owned(), theme::WARNING),
             (Relation::Inside, false) => (match holder {
-                Some(s) => format!("Inside (overlaps) · subnet #{} {s}", self.index_of(net, &s) + 1),
+                Some(s) => format!("Inside (overlaps) · subnet #{} {s}", index_of(net, &s) + 1),
                 None => "Inside this block (they overlap)".to_owned(),
             }, theme::ACCENT),
             (Relation::Contains, _) => ("Contains this whole block: they overlap".to_owned(), theme::WARNING),
@@ -238,16 +281,10 @@ impl SubnetCalculator {
         Some(Check { verdict: Ok(result), other: Some(other), holder })
     }
 
-    /// Position of `subnet` among the block's subnets of its size.
-    fn index_of(&self, net: &IpNet, subnet: &IpNet) -> u128 {
-        let offset = to_u128(subnet.network()) - to_u128(net.network());
-        offset >> (bits(net) - subnet.prefix_len())
-    }
-
     /// The "Split into" choices: "/20 · 16 subnets · 4,091 usable each".
     fn split_label(net: &IpNet, prefix: u8) -> String {
-        let count = 1u128 << (prefix - net.prefix_len());
-        let usable = usable_per_subnet(net, prefix).map(group).unwrap_or_else(|| "2^128".into());
+        let count = subnet_count(net, prefix);
+        let usable = usable_per_subnet(net, prefix).map_or_else(|| "2^128".into(), group);
         let each = if matches!(net, IpNet::V4(_)) && AWS_SIZES.contains(&prefix) { "usable each on AWS" } else { "usable each" };
         format!("/{prefix} · {} {} · {usable} {each}", group(count), if count == 1 { "subnet" } else { "subnets" })
     }
@@ -258,18 +295,20 @@ impl SubnetCalculator {
         let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::hover());
         let painter = ui.painter();
         painter.rect_filled(rect, 6.0, theme::SEARCH_BG);
+        // Where an address falls along the bar, from 0 to 1.
         let fraction = |addr: IpAddr| {
             let offset = to_u128(addr).saturating_sub(to_u128(net.network())) as f64;
             let total = size(net).map_or(2f64.powi(128), |n| n as f64);
             (offset / total) as f32
         };
-        let count = self.split.map(|p| 1u128 << (p - net.prefix_len())).unwrap_or(1);
+        let count = self.split.map_or(1, |p| subnet_count(net, p));
         let inner = rect.shrink(3.0);
-        let held = holder.map(|h| self.index_of(net, &h) as usize);
-        if count <= 256 {
+        let held = holder.map(|h| index_of(net, &h) as usize);
+        if count <= MAX_SEGMENTS {
             for i in 0..count as usize {
                 let x0 = inner.left() + inner.width() * i as f32 / count as f32;
                 let x1 = inner.left() + inner.width() * (i + 1) as f32 / count as f32;
+                // A 1-point gap between segments.
                 let segment = egui::Rect::from_x_y_ranges(x0..=(x1 - if count > 1 { 1.0 } else { 0.0 }), inner.y_range());
                 let hovered = response.hover_pos().is_some_and(|p| segment.contains(p));
                 let fill = if hovered { theme::ACCENT_STRONG } else if held == Some(i) { theme::HOT.gamma_multiply(0.45) } else if i % 2 == 0 { theme::ACCENT_DARK.gamma_multiply(0.75) } else { theme::ACCENT_DARK.gamma_multiply(0.5) };
@@ -283,6 +322,7 @@ impl SubnetCalculator {
             painter.rect_filled(inner, 3.0, theme::ACCENT_DARK.gamma_multiply(0.6));
             painter.text(inner.center(), egui::Align2::CENTER_CENTER, format!("{} subnets", group(count)), egui::FontId::proportional(12.0), theme::TEXT_STRONG);
         }
+        // The checked address or block, at least 3 points wide so a single address shows.
         if let Some(other) = checked.filter(|o| net.trunc().contains(&o.trunc())) {
             let (start, end) = (fraction(other.network()), fraction(other.broadcast()));
             let x0 = inner.left() + inner.width() * start;
@@ -335,7 +375,7 @@ impl SubnetCalculator {
     /// The listed subnets: number, CIDR, range and a copy button; the one
     /// holding the checked address is highlighted.
     fn subnet_table(&self, ui: &mut egui::Ui, net: &IpNet, holder: Option<IpNet>) {
-        let total = self.split.map(|p| 1u128 << (p - net.prefix_len())).unwrap_or(0);
+        let total = self.split.map_or(0, |p| subnet_count(net, p));
         ui::preview_frame(ui, |ui| {
             egui::ScrollArea::horizontal().id_salt("subnet-table").show(ui, |ui| {
                 egui::Grid::new("subnets").num_columns(4).spacing([14.0, 5.0]).striped(true).show(ui, |ui| {
@@ -425,8 +465,8 @@ impl Tool for SubnetCalculator {
             });
             if let Some(prefix) = self.split {
                 right.add_space(8.0);
-                let list: String = self.subnets.iter().map(|s| format!("{s}\n")).collect();
-                ui::toolbar(right, &format!("Subnets /{prefix} ({}):", group(1u128 << (prefix - net.prefix_len()))), |ui| ui::copy_button(ui, &list));
+                let list = self.subnets.iter().fold(String::new(), |mut list, s| { let _ = writeln!(list, "{s}"); list });
+                ui::toolbar(right, &format!("Subnets /{prefix} ({}):", group(subnet_count(&net, prefix))), |ui| ui::copy_button(ui, &list));
                 self.subnet_table(right, &net, holder);
             }
         });
@@ -459,6 +499,8 @@ mod tests {
         assert_eq!(parse("8.8.8.8").unwrap().to_string(), "8.8.8.8/32");
         assert_eq!(parse("2600:1f18:abcd::/56").unwrap().prefix_len(), 56);
         assert!(parse("10.0.0.0/33").unwrap_err().contains("between 0 and 32"));
+        assert_eq!(parse("10.0.0.0 16").unwrap().to_string(), "10.0.0.0/16");
+        assert_eq!(parse("10.0.0.0/ 16").unwrap().to_string(), "10.0.0.0/16");
         assert!(parse("10.0.0.0 255.0.255.0").unwrap_err().contains("not a netmask"));
         assert!(parse("hello").is_err());
     }
@@ -490,8 +532,18 @@ mod tests {
         assert_eq!(relation(&net, &parse("10.0.37.12").unwrap()), Relation::Inside);
         assert_eq!(relation(&net, &parse("10.1.0.0/16").unwrap()), Relation::Disjoint);
         assert_eq!(relation(&net, &parse("10.0.0.0/8").unwrap()), Relation::Contains);
-        let calc = SubnetCalculator { split: Some(20), ..Default::default() };
-        assert_eq!(calc.index_of(&net, &parse("10.0.32.0/20").unwrap()), 2);
+        assert_eq!(index_of(&net, &parse("10.0.32.0/20").unwrap()), 2);
         assert_eq!(group(65536), "65,536");
+    }
+
+    #[test]
+    fn drops_a_split_that_no_longer_fits() {
+        // A /128 split chosen on a /112 must not survive the block becoming /0 (1 << 128 overflows).
+        let mut calc = SubnetCalculator { input: "2001:db8::/112".into(), split: Some(128), ..Default::default() };
+        calc.update();
+        assert_eq!(calc.split, Some(128));
+        calc.input = "2001:db8::/0".into();
+        calc.update();
+        assert_eq!(calc.split, None);
     }
 }

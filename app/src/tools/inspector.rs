@@ -7,6 +7,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use super::{Category, Tool};
 use crate::ui::{self, icon, theme, Highlight};
 
+/// The example: non-breaking spaces, a zero-width space, CRLF, a tab and an emoji with a skin tone.
 const SAMPLE: &str = "Price:\u{a0}42\u{a0}€ — café\u{200b}\r\nTab\there 👋🏽";
 /// The character table lists at most this many characters.
 const TABLE_LIMIT: usize = 300;
@@ -21,11 +22,13 @@ fn is_special(c: char) -> bool {
         || (c.is_control() && !matches!(c, '\n' | '\t' | '\r'))
 }
 
+/// The Unicode name of `c`, e.g. "NO-BREAK SPACE"; `<control>` or `<unnamed>` when it has none.
 fn char_name(c: char) -> String {
     unicode_names2::name(c).map_or_else(|| if c.is_control() { "<control>".into() } else { "<unnamed>".into() }, |n| n.to_string())
 }
 
-/// How a character is shown in the table: invisible ones by their abbreviation.
+/// How a character is shown in the table: line breaks, tabs and spaces as symbols,
+/// other invisible characters as a dot.
 fn visible(c: char) -> String {
     match c {
         '\n' => "↵".into(), '\r' => "␍".into(), '\t' => "⇥".into(), ' ' => "␣".into(),
@@ -36,6 +39,7 @@ fn visible(c: char) -> String {
 
 /// "LF", "CRLF", "CR", "Mixed (LF ×2, CRLF ×1)" or "None".
 fn line_endings(text: &str) -> String {
+    // Each CRLF also counts as one LF and one CR: subtract it from both.
     let crlf = text.matches("\r\n").count();
     let lf = text.matches('\n').count() - crlf;
     let cr = text.matches('\r').count() - crlf;
@@ -72,12 +76,22 @@ fn inspect(text: &str) -> (String, Vec<Range<usize>>) {
     (lines.join("\n"), ranges)
 }
 
+/// The String Inspector tool: the text on the left, its statistics and characters on the right.
 #[derive(Default)]
-pub struct StringInspector { input: String, error: String, stats: String, specials: Vec<Range<usize>> }
+pub struct StringInspector {
+    input: String,
+    error: String,
+    /// The statistics, as `Key: value` lines.
+    stats: String,
+    /// Byte ranges of the special characters, highlighted in the editor.
+    specials: Vec<Range<usize>>,
+}
 
 impl StringInspector {
+    /// Recomputes the statistics and highlights after the input changed.
     fn update(&mut self) { (self.stats, self.specials) = inspect(&self.input); }
 
+    /// The character table, with a note when the text is longer than [`TABLE_LIMIT`].
     fn table(&self, ui: &mut egui::Ui) {
         // Long character names scroll sideways instead of overflowing the frame.
         egui::ScrollArea::horizontal().id_salt("inspector-table").show(ui, |ui| self.grid(ui));
@@ -85,6 +99,8 @@ impl StringInspector {
         if total > TABLE_LIMIT { ui.label(egui::RichText::new(format!("… {} more characters", total - TABLE_LIMIT)).color(theme::SUBTLE)); }
     }
 
+    /// One row per character: index, glyph, code point, UTF-8 bytes and name.
+    /// Special characters are drawn in the warning color.
     fn grid(&self, ui: &mut egui::Ui) {
         egui::Grid::new("inspector-chars").num_columns(5).spacing([12.0, 4.0]).striped(true).show(ui, |ui| {
             for header in ["#", "Char", "Code point", "UTF-8", "Name"] { ui.label(egui::RichText::new(header).small().color(theme::SUBTLE)); }
@@ -120,6 +136,7 @@ impl Tool for StringInspector {
             });
             ui::error_label(left, &self.error);
             changed |= ui::code_editor(left, "text", &mut self.input, "Paste text to inspect…", Highlight::Ranges(&self.specials)).changed();
+            // The editor was just drawn with the old ranges: repaint to highlight the new ones.
             if changed { self.update(); left.ctx().request_repaint(); }
 
             let stats_height = (right.available_height() * 0.42).max(120.0);

@@ -3,8 +3,12 @@
 /// A piece of an HTML document. Slices borrow from the source.
 #[derive(Debug)]
 enum Tok<'a> {
+    /// An opening tag. `name` is lowercase, `raw` is the whole tag as written
+    /// (attributes included), `self_closing` means it ends with `/>`.
     Open { name: String, raw: &'a str, self_closing: bool },
+    /// A closing tag: lowercase `name` and the tag as written.
     Close { name: String, raw: &'a str },
+    /// Text between tags, whitespace included.
     Text(&'a str),
     /// Comments, `<!DOCTYPE>` and `<?…?>`.
     Other(&'a str),
@@ -12,10 +16,12 @@ enum Tok<'a> {
     Raw(&'a str),
 }
 
+/// Void elements: they have no closing tag, so they never open a level of indentation.
 const VOID: &[&str] = &["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"];
 /// Elements whose content is not HTML (or whose whitespace matters).
 const RAW: &[&str] = &["script", "style", "pre", "textarea"];
 
+/// Lowercase name of a tag from its raw text: `<DIV class="a">` → `div`, `</p>` → `p`.
 fn tag_name(raw: &str) -> String {
     raw.trim_start_matches(['<', '/']).chars()
         .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == ':')
@@ -28,6 +34,8 @@ fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
     haystack.as_bytes().windows(needle.len()).position(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
+/// Splits HTML into tags, text, comments and raw element bodies. Only an
+/// unterminated tag, comment or declaration is an error.
 fn tokens(src: &str) -> Result<Vec<Tok<'_>>, String> {
     let bytes = src.as_bytes();
     let mut toks = Vec::new();
@@ -77,7 +85,9 @@ fn tokens(src: &str) -> Result<Vec<Tok<'_>>, String> {
             end
         } else {
             // Text up to the next `<` (a lone `<` that does not start a tag is text).
-            let next = rest[1..].find('<').map_or(src.len(), |k| i + 1 + k);
+            // Skip the first character, which may be several bytes long (`é`).
+            let skip = rest.chars().next().map_or(1, char::len_utf8);
+            let next = rest[skip..].find('<').map_or(src.len(), |k| i + skip + k);
             toks.push(Tok::Text(&src[i..next]));
             next
         };
@@ -85,6 +95,7 @@ fn tokens(src: &str) -> Result<Vec<Tok<'_>>, String> {
     Ok(toks)
 }
 
+/// Collapses each run of whitespace into one space and trims both ends.
 fn collapse(text: &str) -> String { text.split_whitespace().collect::<Vec<_>>().join(" ") }
 
 /// Puts each element on its own line, indented by nesting depth.
@@ -109,12 +120,14 @@ pub(super) fn beautify(src: &str) -> Result<String, String> {
                 // The closing tag of this element, if it comes right after the open tag (or its raw body).
                 let close_at = i + 1 + usize::from(body.is_some());
                 let close = match toks.get(close_at) { Some(Tok::Close { name: n, raw }) if n == name => Some(*raw), _ => None };
+                // Index of the last token this element uses (the loop then moves past it).
                 let consumed_to = if close.is_some() { close_at } else { close_at - 1 };
                 match body {
                     Some(body) if name == "pre" || name == "textarea" => {
                         out.push(format!("{}{raw}{body}{}", pad(depth), close.unwrap_or("")));
                         i = consumed_to;
                     }
+                    // `script` and `style`: re-indented one level deeper than the tag.
                     Some(body) => {
                         out.push(format!("{}{raw}", pad(depth)));
                         let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
@@ -134,6 +147,7 @@ pub(super) fn beautify(src: &str) -> Result<String, String> {
                             out.push(format!("{}{raw}{close}", pad(depth)));
                             i += 1;
                         }
+                        // Anything else: the children go on the following lines, one level deeper.
                         _ => { out.push(format!("{}{raw}", pad(depth))); depth += 1; }
                     },
                 }
@@ -141,6 +155,7 @@ pub(super) fn beautify(src: &str) -> Result<String, String> {
             Tok::Close { raw, .. } => { depth = depth.saturating_sub(1); out.push(format!("{}{raw}", pad(depth))); }
             Tok::Text(text) => { let text = collapse(text); if !text.is_empty() { out.push(format!("{}{text}", pad(depth))); } }
             Tok::Other(other) => out.push(format!("{}{}", pad(depth), other.trim())),
+            // Not reached in practice: a raw body is consumed with its opening tag above.
             Tok::Raw(body) => out.push(body.to_string()),
         }
         i += 1;
@@ -185,5 +200,13 @@ mod tests {
         let out = minify("<div>\n   <p>  Hello  </p>\n</div>").unwrap();
         assert!(out.len() < 25, "{out}");
         assert!(out.contains("Hello"));
+    }
+
+    #[test]
+    fn keeps_non_ascii_text() {
+        // Text after a tag that starts with a multi-byte character used to panic.
+        assert_eq!(beautify("<p>été</p>").unwrap(), "<p>été</p>");
+        assert_eq!(beautify("<ul><li>Œuvre</li><li>naïve</li></ul>").unwrap(), "<ul>\n  <li>Œuvre</li>\n  <li>naïve</li>\n</ul>");
+        assert!(minify("<p>  ça   va </p>").unwrap().contains("ça va"));
     }
 }

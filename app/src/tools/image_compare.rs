@@ -6,36 +6,74 @@ use image::RgbaImage;
 use super::{Category, Tool};
 use crate::ui::{self, icon, theme};
 
-const EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "bmp"];
+/// Names of the two slots, as shown on their labels.
+const SIDE_LETTERS: [&str; 2] = ["A", "B"];
 /// Colors of the A and B labels.
 const SIDE_COLORS: [egui::Color32; 2] = [theme::BLUE, theme::AMBER];
 /// From this magnification on, pixels are drawn as sharp squares (to inspect
 /// them) instead of smoothed.
 const SHARP_SCALE: f32 = 4.0;
+/// Smallest zoom: a quarter of the fitted size.
+const MIN_ZOOM: f32 = 0.25;
+/// Largest zoom: 64 times the fitted size.
+const MAX_ZOOM: f32 = 64.0;
+/// Height of the status line under the view (pixel colors or image details).
 const STATUS_HEIGHT: f32 = 22.0;
+/// In the difference map, pixels that only one image has (when the sizes differ).
+const ONE_SIDED: image::Rgba<u8> = image::Rgba([110, 28, 64, 255]);
 
+/// How the two images are shown.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-enum Mode { #[default] Swipe, SideBySide, Onion, Difference }
+enum Mode {
+    /// A left of a draggable divider, B right of it.
+    #[default] Swipe,
+    SideBySide,
+    /// B blended over A.
+    Onion,
+    /// The map of the pixels that differ.
+    Difference,
+}
 
 /// A loaded image: its pixels (for the difference and the color readout) and its texture.
-struct Picture { name: String, info: String, pixels: RgbaImage, texture: egui::TextureHandle }
+struct Picture {
+    /// File name, or "Pasted image".
+    name: String,
+    /// One-line summary (format, size, bytes), shown on hover and in the status line.
+    info: String,
+    pixels: RgbaImage,
+    texture: egui::TextureHandle,
+}
 
 /// The difference map and how many pixels differ.
-struct Difference { map: RgbaImage, texture: egui::TextureHandle, changed: usize, total: usize }
+struct Difference {
+    /// The map's pixels, kept to upload it again when the magnification filter changes.
+    map: RgbaImage,
+    texture: egui::TextureHandle,
+    /// Pixels that differ.
+    changed: usize,
+    /// Pixels in the map: the larger width by the larger height.
+    total: usize,
+}
 
+/// The Image Compare tool: two image slots, A and B, and a zoomable view of both.
 pub struct ImageCompare {
+    /// Image A and image B.
     pictures: [Option<Picture>; 2],
     mode: Mode,
-    /// Divider position in the swipe view: A is shown left of it, B right of it.
+    /// Divider position in the swipe view, from 0 to 1 across the images:
+    /// A is shown left of it, B right of it.
     split: f32,
-    /// Opacity of B over A in the onion-skin view.
+    /// Opacity of B over A in the onion-skin view, from 0 to 1.
     opacity: f32,
     /// Channel differences up to this value are ignored (e.g. JPEG noise).
     tolerance: u8,
+    /// The difference map, while both images are loaded.
     difference: Option<Difference>,
-    /// 1 fits the images in the view.
+    /// Magnification relative to the images fitted in the view (1 = fit).
     zoom: f32,
+    /// Offset of the images from the center of the view, in points.
     pan: egui::Vec2,
+    /// The checkerboard texture, made on the first draw.
     checker: Option<egui::TextureHandle>,
     /// Whether the textures currently use sharp (nearest) magnification.
     sharp: bool,
@@ -86,13 +124,16 @@ fn difference(a: &RgbaImage, b: &RgbaImage, tolerance: u8) -> (RgbaImage, usize)
     let mut changed = 0;
     let map = RgbaImage::from_fn(w, h, |x, y| match (a.get_pixel_checked(x, y), b.get_pixel_checked(x, y)) {
         (Some(pa), Some(pb)) => {
+            // The largest difference on any channel, alpha included.
             let delta = pa.0.iter().zip(pb.0).map(|(p, q)| p.abs_diff(q)).max().unwrap_or(0);
             if delta > tolerance {
                 changed += 1;
+                // From half brightness (barely different) to full (opposite).
                 let t = 0.5 + 0.5 * delta as f32 / 255.0;
                 let [r, g, b, _] = theme::HOT.to_array();
                 image::Rgba([(r as f32 * t) as u8, (g as f32 * t) as u8, (b as f32 * t) as u8, 255])
             } else {
+                // A's luma over black, dimmed so that the differences stand out.
                 let [r, g, b, alpha] = pa.0;
                 let gray = (0.3 * r as f32 + 0.59 * g as f32 + 0.11 * b as f32) * alpha as f32 / 255.0 * 0.35;
                 image::Rgba([gray as u8, gray as u8, gray as u8, 255])
@@ -100,7 +141,7 @@ fn difference(a: &RgbaImage, b: &RgbaImage, tolerance: u8) -> (RgbaImage, usize)
         }
         _ => {
             changed += 1;
-            image::Rgba([110, 28, 64, 255])
+            ONE_SIDED
         }
     });
     (map, changed)
@@ -148,7 +189,7 @@ fn canvas(pane: egui::Rect, size: egui::Vec2, zoom: f32, pan: egui::Vec2) -> (eg
 fn label(painter: &egui::Painter, anchor: egui::Pos2, align: egui::Align2, side: usize, name: &str) {
     let mut job = egui::text::LayoutJob::default();
     let font = egui::FontId::proportional(12.0);
-    job.append(["A", "B"][side], 0.0, egui::TextFormat::simple(egui::FontId::proportional(12.5), SIDE_COLORS[side]));
+    job.append(SIDE_LETTERS[side], 0.0, egui::TextFormat::simple(egui::FontId::proportional(12.5), SIDE_COLORS[side]));
     job.append(name, 8.0, egui::TextFormat::simple(font, theme::TEXT_STRONG));
     let galley = painter.layout_job(job);
     let rect = align.anchor_size(anchor, galley.size() + egui::vec2(16.0, 8.0));
@@ -157,6 +198,8 @@ fn label(painter: &egui::Painter, anchor: egui::Pos2, align: egui::Align2, side:
 }
 
 impl ImageCompare {
+    /// Puts an image in slot `side` (0 = A, 1 = B) and uploads its texture;
+    /// [`Self::refresh`] updates the difference afterwards.
     fn set(&mut self, ctx: &egui::Context, side: usize, name: String, info: String, pixels: RgbaImage) {
         let texture = upload(ctx, &format!("compare-{side}"), &pixels, self.sharp);
         self.pictures[side] = Some(Picture { name, info, pixels, texture });
@@ -165,15 +208,19 @@ impl ImageCompare {
 
     /// Loads files into the slots from `side` on (two files fill both).
     fn load_files(&mut self, ctx: &egui::Context, side: usize, files: Vec<Result<(String, Vec<u8>), String>>) {
+        let mut error = None;
         for (side, file) in (side..2).zip(files) {
             match file.and_then(|(name, bytes)| decode(&name, &bytes).map(|(info, pixels)| (name, info, pixels))) {
                 Ok((name, info, pixels)) => self.set(ctx, side, name, info, pixels),
-                Err(e) => self.error = e,
+                Err(e) => error = Some(e),
             }
         }
+        // `set` clears the error: keep the one from a file that failed to open.
+        if let Some(e) = error { self.error = e; }
         self.refresh(ctx);
     }
 
+    /// Puts the clipboard's image in slot `side`, or says why there is none.
     fn paste(&mut self, ctx: &egui::Context, side: usize) {
         let image = arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_image());
         match image.ok().and_then(|img| RgbaImage::from_raw(img.width as u32, img.height as u32, img.bytes.into_owned())) {
@@ -214,14 +261,15 @@ impl ImageCompare {
         self.load_files(ctx, side, files.iter().map(ui::read_dropped).collect());
     }
 
+    /// The Images toolbar: open or paste A and B, swap them, load the sample, clear.
     fn images_toolbar(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         ui::toolbar(ui, "Images:", |ui| {
             for side in 0..2 {
-                let letter = ["A", "B"][side];
+                let letter = SIDE_LETTERS[side];
                 ui.label(egui::RichText::new(letter).strong().color(SIDE_COLORS[side]));
                 if ui::icon_only(ui, icon::FOLDER_OPEN, &format!("Open image {letter} (pick two to fill both)")) {
-                    let paths = ui::pick_files("Open images to compare", &EXTENSIONS);
+                    let paths = ui::pick_files("Open images to compare", &ui::IMAGE_EXTENSIONS);
                     if !paths.is_empty() { self.load_files(&ctx, side, paths.iter().map(|p| ui::read_path(p)).collect()); }
                 }
                 if ui::icon_only(ui, icon::CLIPBOARD, &format!("Paste image {letter} from the clipboard")) { self.paste(&ctx, side); }
@@ -240,6 +288,7 @@ impl ImageCompare {
         });
     }
 
+    /// The View toolbar: mode and its slider, zoom, and how much the images differ.
     fn view_toolbar(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         ui::toolbar(ui, "View:", |ui| {
@@ -314,7 +363,9 @@ impl ImageCompare {
             let pane = panes.iter().find(|pane| pane.contains(p)).copied().unwrap_or(view);
             let (zoom, scroll) = ui.input(|i| (i.zoom_delta(), i.smooth_scroll_delta));
             if zoom != 1.0 {
-                let new_zoom = (self.zoom * zoom).clamp(0.25, 64.0);
+                // Keep the image point under the pointer in place: its offset from
+                // the canvas center (pane center + pan) scales with the zoom.
+                let new_zoom = (self.zoom * zoom).clamp(MIN_ZOOM, MAX_ZOOM);
                 let k = new_zoom / self.zoom;
                 self.pan = (p - pane.center()) - (p - pane.center() - self.pan) * k;
                 self.zoom = new_zoom;
@@ -326,6 +377,7 @@ impl ImageCompare {
             self.zoom = 1.0;
             self.pan = egui::Vec2::ZERO;
         }
+        // Pan no further than the canvas edges, and not at all along a side that fits.
         let (_, scale) = canvas(panes[0], size, self.zoom, egui::Vec2::ZERO);
         let limit = ((size * scale - panes[0].size()) / 2.0).max(egui::Vec2::ZERO);
         self.pan = self.pan.clamp(-limit, limit);
@@ -341,6 +393,7 @@ impl ImageCompare {
         for (index, pane) in panes.iter().enumerate() {
             let (canvas, scale) = canvas(*pane, size, self.zoom, self.pan);
             let painter = painter.with_clip_rect(*pane);
+            // The 2×2 tile repeats every 16 points: 8-point squares.
             let checker_uv = egui::Rect::from_min_size(egui::Pos2::ZERO, canvas.size() / 16.0);
             painter.image(checker, canvas, checker_uv, egui::Color32::WHITE);
             let place = |p: &Picture| egui::Rect::from_min_size(canvas.min, egui::vec2(p.pixels.width() as f32, p.pixels.height() as f32) * scale);
@@ -375,7 +428,7 @@ impl ImageCompare {
                     }
                     if !both {
                         painter.text(pane.center_bottom() - egui::vec2(0.0, 14.0), egui::Align2::CENTER_BOTTOM,
-                            format!("Add image {} to compare", ["A", "B"][1 - side]), egui::FontId::proportional(13.0), theme::TEXT_STRONG);
+                            format!("Add image {} to compare", SIDE_LETTERS[1 - side]), egui::FontId::proportional(13.0), theme::TEXT_STRONG);
                     }
                 }
             }
@@ -399,6 +452,7 @@ impl ImageCompare {
         readout
     }
 
+    /// Loads the example pair. Unlike [`Tool::load_sample`], it has the context the textures need.
     fn load_sample_with(&mut self, ctx: &egui::Context) {
         self.set(ctx, 0, "afternoon.png".into(), "Sample · 480×300".into(), landscape(false));
         self.set(ctx, 1, "sunset.png".into(), "Sample · 480×300".into(), landscape(true));
@@ -426,7 +480,7 @@ impl Tool for ImageCompare {
         ui.horizontal(|ui| {
             ui.set_height(STATUS_HEIGHT);
             let text = readout.unwrap_or_else(|| {
-                self.pictures.iter().zip(["A", "B"]).filter_map(|(p, letter)| p.as_ref().map(|p| format!("{letter}: {}", p.info))).collect::<Vec<_>>().join("     ")
+                self.pictures.iter().zip(SIDE_LETTERS).filter_map(|(p, letter)| p.as_ref().map(|p| format!("{letter}: {}", p.info))).collect::<Vec<_>>().join("     ")
             });
             ui.label(egui::RichText::new(text).monospace().small().color(theme::SUBTLE));
         });

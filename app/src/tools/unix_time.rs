@@ -6,7 +6,17 @@ use eframe::egui;
 use super::{Category, Tool};
 use crate::ui::{self, icon, theme};
 
+/// Example for the "Sample" button: 14 Nov 2023, 22:13:20 UTC.
 const SAMPLE: &str = "1700000000";
+
+/// How dates are written in the report (and in the JWT Debugger), e.g. "Tue 14 Nov 2023, 22:13:20".
+pub(super) const DATE_TIME_FORMAT: &str = "%a %-d %b %Y, %H:%M:%S";
+
+/// Shown when a wall-clock time falls in a daylight-saving gap.
+const DST_GAP: &str = "That time does not exist in this zone (daylight-saving gap)";
+
+/// Every timestamp is converted through nanoseconds, whatever its unit.
+const NANOS_PER_SECOND: i128 = 1_000_000_000;
 
 /// Time zones offered before searching the full IANA list.
 const COMMON_ZONES: [Tz; 16] = [
@@ -15,10 +25,18 @@ const COMMON_ZONES: [Tz; 16] = [
     Tz::Asia__Dubai, Tz::Asia__Kolkata, Tz::Asia__Singapore, Tz::Asia__Tokyo, Tz::Australia__Sydney, Tz::Pacific__Auckland,
 ];
 
+/// The time zone dates are shown in, and wall-clock input is read in.
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum Zone { Local, Utc, Named(Tz) }
+enum Zone {
+    /// The system's zone.
+    Local,
+    Utc,
+    /// An IANA zone, e.g. `America/Toronto`.
+    Named(Tz),
+}
 
 impl Zone {
+    /// Name for the zone menu and the report (`America/New York`: underscores become spaces).
     fn label(self) -> String {
         match self { Zone::Local => "Local time".into(), Zone::Utc => "UTC".into(), Zone::Named(tz) => tz.name().replace('_', " ") }
     }
@@ -42,18 +60,22 @@ impl Zone {
     }
 }
 
+/// The unit of a numeric timestamp. `Auto` guesses it with [`Unit::detect`].
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Unit { Auto, Seconds, Millis, Micros, Nanos }
 
 impl Unit {
+    /// Every unit, in menu order.
     const ALL: [Unit; 5] = [Unit::Auto, Unit::Seconds, Unit::Millis, Unit::Micros, Unit::Nanos];
 
+    /// Name in the unit menu; lowercased for the report's "Read as" line.
     fn label(self) -> &'static str {
         match self { Unit::Auto => "Auto", Unit::Seconds => "Seconds", Unit::Millis => "Milliseconds", Unit::Micros => "Microseconds", Unit::Nanos => "Nanoseconds" }
     }
 
+    /// Nanoseconds in one of this unit (`Auto` counts as seconds).
     fn nanos(self) -> i128 {
-        match self { Unit::Auto | Unit::Seconds => 1_000_000_000, Unit::Millis => 1_000_000, Unit::Micros => 1_000, Unit::Nanos => 1 }
+        match self { Unit::Auto | Unit::Seconds => NANOS_PER_SECOND, Unit::Millis => 1_000_000, Unit::Micros => 1_000, Unit::Nanos => 1 }
     }
 
     /// Guesses the unit from the number of digits: seconds cover years 1973–5138
@@ -74,45 +96,55 @@ impl Unit {
 fn parse_input(text: &str, unit: Unit, zone: Zone) -> Result<(DateTime<Utc>, Option<Unit>), String> {
     let t = text.trim();
     if t.eq_ignore_ascii_case("now") { return Ok((Utc::now(), None)); }
+    // Numbers may use `_` as a digit separator: 1_700_000_000.
     let compact = t.replace('_', "");
     if let Ok(n) = compact.parse::<i128>() {
         let unit = if unit == Unit::Auto { Unit::detect(n) } else { unit };
         return from_nanos(n.checked_mul(unit.nanos()).ok_or("Timestamp out of range")?).map(|d| (d, Some(unit)));
     }
-    if let Ok(f) = compact.parse::<f64>() {
+    if let Some(f) = compact.parse::<f64>().ok().filter(|f| f.is_finite()) {
         let unit = if unit == Unit::Auto { Unit::detect(f as i128) } else { unit };
         return from_nanos((f * unit.nanos() as f64).round() as i128).map(|d| (d, Some(unit)));
     }
     if let Ok(d) = DateTime::parse_from_rfc3339(t) { return Ok((d.with_timezone(&Utc), None)); }
     if let Ok(d) = DateTime::parse_from_rfc2822(t) { return Ok((d.with_timezone(&Utc), None)); }
+    // Without an offset, a date and time is a wall-clock time in `zone`.
     for format in ["%Y-%m-%d %H:%M:%S%.f", "%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"] {
         if let Ok(naive) = NaiveDateTime::parse_from_str(t, format) {
-            return zone.instant(naive).map(|d| (d, None)).ok_or_else(|| "That time does not exist in this zone (daylight-saving gap)".into());
+            return zone.instant(naive).map(|d| (d, None)).ok_or_else(|| DST_GAP.into());
         }
     }
     if let Ok(date) = NaiveDate::parse_from_str(t, "%Y-%m-%d") {
-        return zone.instant(date.and_time(NaiveTime::MIN)).map(|d| (d, None)).ok_or_else(|| "That time does not exist in this zone".into());
+        return zone.instant(date.and_time(NaiveTime::MIN)).map(|d| (d, None)).ok_or_else(|| DST_GAP.into());
     }
     Err("Enter a Unix timestamp (s, ms, µs or ns), a date like 2024-05-17 14:30 or 2024-05-17T14:30:00Z, or \"now\"".into())
 }
 
+/// The instant `nanos` nanoseconds after the epoch (before it if negative),
+/// or an error outside the range `chrono` supports.
 fn from_nanos(nanos: i128) -> Result<DateTime<Utc>, String> {
-    let secs = i64::try_from(nanos.div_euclid(1_000_000_000)).map_err(|_| "Timestamp out of range")?;
-    DateTime::from_timestamp(secs, nanos.rem_euclid(1_000_000_000) as u32).ok_or_else(|| "Timestamp out of range".into())
+    let secs = i64::try_from(nanos.div_euclid(NANOS_PER_SECOND)).map_err(|_| "Timestamp out of range")?;
+    DateTime::from_timestamp(secs, nanos.rem_euclid(NANOS_PER_SECOND) as u32).ok_or_else(|| "Timestamp out of range".into())
 }
 
-/// "in 2 hours", "3 days ago", "just now".
+/// "in 2 hours", "3 days ago", "just now". Rounds down to the largest whole
+/// unit; months count as 30 days and years as 365.
 pub(super) fn relative(delta: TimeDelta) -> String {
+    const MINUTE: u64 = 60;
+    const HOUR: u64 = 60 * MINUTE;
+    const DAY: u64 = 24 * HOUR;
+    const MONTH: u64 = 30 * DAY;
+    const YEAR: u64 = 365 * DAY;
     let seconds = delta.num_seconds();
     let abs = seconds.unsigned_abs();
     if abs < 10 { return "just now".into(); }
     let (n, unit) = match abs {
-        a if a < 60 => (a, "second"),
-        a if a < 3_600 => (a / 60, "minute"),
-        a if a < 86_400 => (a / 3_600, "hour"),
-        a if a < 30 * 86_400 => (a / 86_400, "day"),
-        a if a < 365 * 86_400 => (a / (30 * 86_400), "month"),
-        a => (a / (365 * 86_400), "year"),
+        a if a < MINUTE => (a, "second"),
+        a if a < HOUR => (a / MINUTE, "minute"),
+        a if a < DAY => (a / HOUR, "hour"),
+        a if a < MONTH => (a / DAY, "day"),
+        a if a < YEAR => (a / MONTH, "month"),
+        a => (a / YEAR, "year"),
     };
     let plural = if n == 1 { "" } else { "s" };
     if seconds > 0 { format!("in {n} {unit}{plural}") } else { format!("{n} {unit}{plural} ago") }
@@ -127,8 +159,8 @@ fn report(instant: DateTime<Utc>, zone: Zone, detected: Option<Unit>, now: DateT
     lines.push(format!("Unix milliseconds: {}", instant.timestamp_millis()));
     lines.push(format!("Unix microseconds: {}", instant.timestamp_micros()));
     lines.push(String::new());
-    lines.push(format!("UTC: {}", instant.format("%a %-d %b %Y, %H:%M:%S")));
-    if zone != Zone::Utc { lines.push(format!("{}: {} ({abbreviation})", zone.label(), zoned.format("%a %-d %b %Y, %H:%M:%S"))); }
+    lines.push(format!("UTC: {}", instant.format(DATE_TIME_FORMAT)));
+    if zone != Zone::Utc { lines.push(format!("{}: {} ({abbreviation})", zone.label(), zoned.format(DATE_TIME_FORMAT))); }
     lines.push(format!("Relative: {}", relative(instant - now)));
     lines.push(String::new());
     lines.push(format!("ISO 8601: {}", instant.to_rfc3339_opts(SecondsFormat::AutoSi, true)));
@@ -138,14 +170,20 @@ fn report(instant: DateTime<Utc>, zone: Zone, detected: Option<Unit>, now: DateT
     lines.join("\n")
 }
 
+/// The Unix Time Converter: a timestamp or date as input, unit and zone
+/// options, a date/time picker and a "Key: value" report.
 pub struct UnixTime {
     input: String,
+    /// Unit of numeric input; [`Unit::Auto`] detects it.
     unit: Unit,
     zone: Zone,
+    /// Search text typed in the time-zone menu.
     zone_filter: String,
     /// Calendar and clock fields, kept in sync with the input (in `zone`).
     date: NaiveDate,
+    /// Hour, minute and second.
     time: (u32, u32, u32),
+    /// The report, see [`report`].
     output: String,
     error: String,
 }
@@ -193,16 +231,18 @@ impl UnixTime {
                 };
                 self.update(false);
             }
-            None => self.error = "That time does not exist in this zone (daylight-saving gap)".into(),
+            None => self.error = DST_GAP.into(),
         }
     }
 
-    /// The time-zone menu: local time, UTC and common zones; typing searches all IANA zones.
+    /// The time-zone menu: local time, UTC and common zones; typing searches all
+    /// IANA zones. Returns true when another zone was picked.
     fn zone_picker(&mut self, ui: &mut egui::Ui) -> bool {
         let before = self.zone;
         egui::ComboBox::from_id_salt("unix-zone").width(210.0).height(320.0).selected_text(self.zone.label()).show_ui(ui, |ui| {
             ui.add(egui::TextEdit::singleline(&mut self.zone_filter).hint_text(format!("{}  Search all zones…", icon::MAGNIFYING_GLASS)));
             ui.separator();
+            // IANA names use `_` where labels show a space ("New York").
             let query = self.zone_filter.to_lowercase().replace(' ', "_");
             if query.is_empty() {
                 ui.selectable_value(&mut self.zone, Zone::Local, Zone::Local.label());
@@ -225,6 +265,8 @@ impl Tool for UnixTime {
     fn category(&self) -> Category { Category::Date }
 
     fn ui(&mut self, ui: &mut egui::Ui) {
+        // The ⇄ menu leaves out the tool it is drawn in.
+        let tool_name = self.name();
         // Keep "Now" and the relative time current.
         ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
         ui::description(ui, "Type a Unix timestamp (s, ms, µs or ns are detected), a date (ISO 8601, RFC 2822) or \"now\", or pick a date.");
@@ -284,8 +326,9 @@ impl Tool for UnixTime {
 
             let reuse = ui::toolbar(right, "Result:", |ui| {
                 ui::copy_button(ui, &self.output);
-                super::reuse_menu(ui, &self.output, "Unix Time Converter")
+                super::reuse_menu(ui, &self.output, tool_name)
             });
+            // "Use as input here" takes the seconds back, not the whole report.
             if reuse { self.input = self.output.lines().find_map(|l| l.strip_prefix("Unix seconds: ")).unwrap_or_default().to_owned(); self.update(true); }
             ui::error_label(right, &self.error);
             ui::properties(right, "result", &self.output);
@@ -319,6 +362,8 @@ mod tests {
         }
         assert_eq!(parse_input("1700000000.5", Unit::Auto, Zone::Utc).unwrap().0, utc("2023-11-14T22:13:20.5Z"));
         assert_eq!(parse_input("-86400", Unit::Auto, Zone::Utc).unwrap().0, utc("1969-12-31T00:00:00Z"));
+        assert!(parse_input("nan", Unit::Auto, Zone::Utc).is_err());
+        assert!(parse_input("inf", Unit::Auto, Zone::Utc).is_err());
         // An explicit unit wins over detection.
         assert_eq!(parse_input("1700000000", Unit::Millis, Zone::Utc).unwrap().0, utc("1970-01-20T16:13:20Z"));
     }

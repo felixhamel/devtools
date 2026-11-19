@@ -1,4 +1,6 @@
-//! Encoders and decoders: Base64, URL, HTML entities, backslash escapes, hex.
+//! Text encoders and decoders built as [`TextTool`]s (URL, HTML entities,
+//! backslash escapes, hex), and the lenient Base64 decoder other tools share.
+use std::fmt::Write;
 use base64::{alphabet, engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig}, Engine};
 use super::{Category, TextTool, Tool};
 use crate::ui::icon;
@@ -14,6 +16,7 @@ pub fn decode_base64(text: &str) -> Result<Vec<u8>, String> {
     LENIENT.decode(normalized).map_err(|e| format!("Invalid Base64: {e}"))
 }
 
+/// URL Encode/Decode: percent-encoding as a component or as a full URL.
 pub fn url() -> Box<dyn Tool> {
     Box::new(TextTool::new("URL Encode/Decode", icon::PERCENT, Category::Encoding, vec![
         ("Component", |s| Ok(percent_encoding::utf8_percent_encode(s, COMPONENT).to_string())),
@@ -21,7 +24,7 @@ pub fn url() -> Box<dyn Tool> {
         ("Decode", url_decode),
     ])
     .describe("Component escapes everything but letters, digits and - _ . ~ (encodeURIComponent). Full URL keeps : / ? # & = intact (encodeURI).")
-    .sample(r#"https://example.com/search?q=café & crème&lang=fr#résultats"#))
+    .sample("https://example.com/search?q=café & crème&lang=fr#résultats"))
 }
 
 /// Percent-encodes all but RFC 3986 unreserved characters, like `encodeURIComponent`.
@@ -32,11 +35,15 @@ const FULL_URL: &percent_encoding::AsciiSet = &COMPONENT
     .remove(b';').remove(b',').remove(b'/').remove(b'?').remove(b':').remove(b'@').remove(b'&').remove(b'=').remove(b'+')
     .remove(b'$').remove(b'!').remove(b'*').remove(b'\'').remove(b'(').remove(b')').remove(b'#');
 
+/// Decodes `%XX` sequences; the result must be UTF-8. `+` is kept as is
+/// (it only means a space in form data).
 fn url_decode(input: &str) -> Result<String, String> {
-    percent_encoding::percent_decode_str(input).decode_utf8().map(|s| s.into_owned())
+    percent_encoding::percent_decode_str(input).decode_utf8().map(std::borrow::Cow::into_owned)
         .map_err(|_| "The decoded bytes are not valid UTF-8 text".to_string())
 }
 
+/// HTML Entity Encode/Decode: escapes the five characters special in HTML,
+/// or decodes named and numeric entities.
 pub fn html_entity() -> Box<dyn Tool> {
     Box::new(TextTool::new("HTML Entity Encode/Decode", icon::BRACKETS_ANGLE, Category::Encoding, vec![
         ("Encode", |s| Ok(s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;"))),
@@ -47,6 +54,7 @@ pub fn html_entity() -> Box<dyn Tool> {
     .sample(r#"<a href="/menu">Café & "thé"</a>"#).syntax("html"))
 }
 
+/// Backslash Escape/Unescape, for string literals in JSON, JavaScript, C…
 pub fn backslash() -> Box<dyn Tool> {
     Box::new(TextTool::new("Backslash Escape/Unescape", icon::QUOTES, Category::Encoding, vec![("Escape", escape), ("Unescape", unescape)])
         .describe("Escape special characters for a string literal, or turn \\n, \\t, \\uXXXX… back into characters.").sample(r#"Line 1
@@ -54,6 +62,8 @@ pub fn backslash() -> Box<dyn Tool> {
 C:\Users"#))
 }
 
+/// Escapes `\`, `"`, line breaks, tabs and other control characters (as
+/// `\uXXXX`), so the text fits in a double-quoted JSON or JavaScript string.
 fn escape(input: &str) -> Result<String, String> {
     let mut out = String::with_capacity(input.len());
     for c in input.chars() {
@@ -63,7 +73,7 @@ fn escape(input: &str) -> Result<String, String> {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
-            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c if c.is_control() => { let _ = write!(out, "\\u{:04x}", u32::from(c)); }
             c => out.push(c),
         }
     }
@@ -85,15 +95,18 @@ fn unescape(input: &str) -> Result<String, String> {
     let mut i = 0;
     while i < chars.len() {
         if chars[i] != '\\' || i + 1 == chars.len() { out.push(chars[i]); i += 1; continue; }
+        // The decoded character (`None` if malformed) and how many input characters it took.
         let (decoded, used) = match chars[i + 1] {
             'n' => (Some('\n'), 2), 'r' => (Some('\r'), 2), 't' => (Some('\t'), 2),
             'b' => (Some('\u{8}'), 2), 'f' => (Some('\u{c}'), 2), 'v' => (Some('\u{b}'), 2), '0' => (Some('\0'), 2),
             c @ ('\\' | '"' | '\'' | '/') => (Some(c), 2),
-            'x' => (hex(i + 2, 2).and_then(char::from_u32), 4),
+            'x' => match hex(i + 2, 2) { Some(c) => (char::from_u32(c), 4), None => (None, 2) },
+            // `\u{1F600}`: any number of hex digits between braces (Rust, ES2015).
             'u' if chars.get(i + 2) == Some(&'{') => {
                 let end = chars[i + 3..].iter().position(|&c| c == '}').map(|k| i + 3 + k);
-                match end {
-                    Some(end) => (hex(i + 3, end - i - 3).and_then(char::from_u32), end - i + 1),
+                match end.and_then(|end| hex(i + 3, end - i - 3).map(|c| (c, end))) {
+                    Some((c, end)) => (char::from_u32(c), end - i + 1),
+                    // Not `\u{hex}`: keep the backslash and `u`, read on from there.
                     None => (None, 2),
                 }
             }
@@ -119,17 +132,20 @@ fn unescape(input: &str) -> Result<String, String> {
     Ok(out)
 }
 
+/// Hex ↔ ASCII: text to hexadecimal UTF-8 bytes and back.
 pub fn hex() -> Box<dyn Tool> {
     Box::new(TextTool::new("Hex \u{2194} ASCII", icon::HEXAGON, Category::Encoding, vec![("Text \u{2192} Hex", text_to_hex), ("Hex \u{2192} Text", hex_to_text)])
         .describe("Converts text to hexadecimal bytes and back. Hex input may use spaces, colons, 0x or \\x prefixes.")
-        .sample(r#"Hello, world!"#))
+        .sample("Hello, world!"))
 }
 
+/// Each UTF-8 byte as two uppercase hex digits, separated by spaces.
 fn text_to_hex(input: &str) -> Result<String, String> {
     Ok(input.as_bytes().iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "))
 }
 
-/// Accepts `48656C6C6F`, `48 65 6c`, `48:65`, `0x48 0x65` or `\x48\x65`.
+/// Accepts `48656C6C6F`, `48 65 6c`, `48:65`, `48,65`, `48-65`, `0x48 0x65` or
+/// `\x48\x65`. The bytes must be UTF-8 text.
 fn hex_to_text(input: &str) -> Result<String, String> {
     let lower = input.to_ascii_lowercase().replace("0x", "").replace("\\x", "");
     let digits: String = lower.chars().filter(|c| !c.is_whitespace() && !matches!(c, ':' | ',' | '-')).collect();
@@ -191,5 +207,8 @@ mod tests {
     fn unescapes_unicode_and_keeps_unknown() {
         assert_eq!(unescape(r"é\x41\u{1F600}😀\'\/").unwrap(), "éA😀😀'/");
         assert_eq!(unescape(r"\q \u12 \x+1 \u{} \").unwrap(), r"\q \u12 \x+1 \u{} \");
+        // A malformed escape must not swallow the next one.
+        assert_eq!(unescape(r"\x4\n").unwrap(), "\\x4\n");
+        assert_eq!(unescape(r"\u{zz}\t}").unwrap(), "\\u{zz}\t}");
     }
 }

@@ -4,27 +4,47 @@ use eframe::egui;
 use super::{text::random_bytes, Category, Tool};
 use crate::ui::{self, icon, theme};
 
+/// Character class: lowercase letters.
 const LOWER: &str = "abcdefghijklmnopqrstuvwxyz";
+/// Character class: uppercase letters.
 const UPPER: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+/// Character class: digits.
 const DIGITS: &str = "0123456789";
+/// Character class: common ASCII symbols (no quotes, backslash or space).
 const SYMBOLS: &str = "!@#$%^&*()-_=+[]{};:,.?/~";
 /// Characters easily confused when read or typed: 0/O/o, 1/l/I, and quote-like ones.
 const AMBIGUOUS: &str = "0Oo1lI|`'\"";
 
+/// What the generator makes.
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum Mode { Password, Passphrase }
+enum Mode {
+    /// Random characters from the selected classes.
+    Password,
+    /// Random words from the BIP-39 list.
+    Passphrase,
+}
 
+/// The generator's settings; results are regenerated whenever they change.
 #[derive(Clone, PartialEq, Debug)]
 struct Options {
     mode: Mode,
+    /// Characters per password.
     length: usize,
+    /// Include [`LOWER`].
     lower: bool,
+    /// Include [`UPPER`].
     upper: bool,
+    /// Include [`DIGITS`].
     digits: bool,
+    /// Include [`SYMBOLS`].
     symbols: bool,
+    /// Leave out the [`AMBIGUOUS`] characters.
     avoid_ambiguous: bool,
+    /// Words per passphrase.
     words: usize,
+    /// Put between passphrase words (may be empty).
     separator: String,
+    /// Start each passphrase word with a capital.
     capitalize: bool,
 }
 
@@ -88,6 +108,7 @@ fn passphrase(options: &Options) -> Result<String, String> {
     Ok(words.join(&options.separator))
 }
 
+/// Label and color for `bits` of entropy.
 fn strength(bits: f64) -> (&'static str, egui::Color32) {
     match bits {
         b if b < 45.0 => ("Weak", theme::DIFF_REMOVED),
@@ -97,13 +118,24 @@ fn strength(bits: f64) -> (&'static str, egui::Color32) {
     }
 }
 
-pub struct Password { options: Options, count: usize, output: String, error: String, generated_for: Option<(Options, usize)> }
+/// The Password Generator tool.
+pub struct Password {
+    options: Options,
+    /// How many passwords to generate.
+    count: usize,
+    /// The results, one per line.
+    output: String,
+    error: String,
+    /// Options and count `output` was generated with; a change regenerates.
+    generated_for: Option<(Options, usize)>,
+}
 
 impl Default for Password {
     fn default() -> Self { Self { options: Options::default(), count: 5, output: String::new(), error: String::new(), generated_for: None } }
 }
 
 impl Password {
+    /// Replaces the output with `count` new results (or the error).
     fn generate(&mut self) {
         let make = |o: &Options| match o.mode { Mode::Password => password(o), Mode::Passphrase => passphrase(o) };
         match (0..self.count).map(|_| make(&self.options)).collect::<Result<Vec<_>, _>>() {
@@ -113,6 +145,7 @@ impl Password {
         self.generated_for = Some((self.options.clone(), self.count));
     }
 
+    /// The mode switch, the options of that mode, the count and the strength meter.
     fn options_ui(&mut self, ui: &mut egui::Ui) {
         let o = &mut self.options;
         let (password, passphrase) = (format!("{}  Password", icon::PASSWORD), format!("{}  Passphrase", icon::TEXT_AA));
@@ -156,6 +189,7 @@ impl Password {
         let bits = self.options.entropy_bits();
         let (label, color) = strength(bits);
         ui.label(egui::RichText::new(format!("Strength: {label} · about {bits:.0} bits of entropy")).color(color));
+        // 128 bits (beyond brute force) fills the bar.
         ui.add(egui::ProgressBar::new((bits / 128.0).min(1.0) as f32).fill(color).desired_height(6.0));
     }
 }

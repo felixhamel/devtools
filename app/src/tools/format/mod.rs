@@ -10,44 +10,51 @@ use crate::ui::icon;
 mod css;
 mod html;
 
+/// HTML Beautify/Minify, see [`html::beautify`] and [`html::minify`].
 pub fn html() -> Box<dyn Tool> {
     Box::new(TextTool::new("HTML Beautify/Minify", icon::FILE_HTML, Category::Code, vec![("Beautify", html::beautify), ("Minify", html::minify)])
         .describe("Indents HTML one element per line (inline <style> and <script> included), or minifies it.").sample(r#"<!DOCTYPE html><html><head><title>Hello</title><style>body{font-family:system-ui}</style></head><body><nav><a href="/">Home</a><a href="/about">About</a></nav><main><h1>Hello, world</h1><p>Some <b>bold</b> text.</p></main></body></html>"#).syntax("html"))
 }
 
+/// CSS/SCSS Beautify/Minify, see [`css::beautify`] and [`css::minify`].
 pub fn css() -> Box<dyn Tool> {
     Box::new(TextTool::new("CSS/SCSS Beautify/Minify", icon::FILE_CSS, Category::Code, vec![("Beautify", css::beautify), ("Minify", css::minify)])
         .describe("Formats CSS and SCSS (nesting, // comments and #{…} interpolation are understood).")
-        .sample(r#"$accent:#56d28f;
+        .sample(r"$accent:#56d28f;
 // card component
 .card{padding:8px;&:hover{color:$accent}.title{font-weight:bold;margin:#{$gap} 0}}
-@media (max-width:600px){.nav{display:none}}"#).syntax("css"))
+@media (max-width:600px){.nav{display:none}}").syntax("css"))
 }
 
+/// JS Beautify/Minify, see [`js_rewrite`].
 pub fn js() -> Box<dyn Tool> {
     Box::new(TextTool::new("JS Beautify/Minify", icon::FILE_JS, Category::Code, vec![("Beautify", |s| js_rewrite(s, false)), ("Minify", |s| js_rewrite(s, true))])
-        .describe("Reprints JavaScript (JSX allowed). Beautify normalizes quotes and spacing; Minify also shortens names.").sample(r#"// greet someone
+        .describe("Reprints JavaScript (JSX allowed). Beautify normalizes quotes and spacing; Minify also shortens names.").sample(r"// greet someone
 function greet(name){const message=`Hello, ${name}!`;return message}
-export const users=['Ada','Grace'].map(greet);console.log(users)"#).syntax("js"))
+export const users=['Ada','Grace'].map(greet);console.log(users)").syntax("js"))
 }
 
+/// XML Beautify/Minify, see [`xml_rewrite`].
 pub fn xml() -> Box<dyn Tool> {
     Box::new(TextTool::new("XML Beautify/Minify", icon::FILE_CODE, Category::Code, vec![("Beautify", |s| xml_rewrite(s, true)), ("Minify", |s| xml_rewrite(s, false))])
         .describe("Indents XML (well-formedness is checked, comments and CDATA are kept), or minifies it.").sample(r#"<?xml version="1.0"?><note id="42"><to>Ada</to><from>Grace</from><body>Hello <b>there</b></body><tags/></note>"#).syntax("xml"))
 }
 
+/// SQL Formatter, see [`sql_format`].
 pub fn sql() -> Box<dyn Tool> {
     Box::new(TextTool::new("SQL Formatter", icon::DATABASE, Category::Code, vec![("Format", sql_format)])
-        .describe("Formats SQL with one clause per line and uppercase keywords. Most dialects are understood.").sample(r#"select u.id, u.name, count(o.id) as orders from users u left join orders o on o.user_id = u.id where u.active = true group by u.id, u.name order by orders desc limit 10"#).syntax("sql"))
+        .describe("Formats SQL with one clause per line and uppercase keywords. Most dialects are understood.").sample("select u.id, u.name, count(o.id) as orders from users u left join orders o on o.user_id = u.id where u.active = true group by u.id, u.name order by orders desc limit 10").syntax("sql"))
 }
 
+/// Formats SQL with `sqlformat`: one clause per line, uppercase keywords,
+/// 2-space indentation. `sqlformat` never rejects input, so this never fails.
 fn sql_format(src: &str) -> Result<String, String> {
     Ok(sqlformat::format(src, &sqlformat::QueryParams::None, &sqlformat::FormatOptions { uppercase: Some(true), ..Default::default() }))
 }
 
 /// 1-based line number of a byte offset, for error messages.
 fn line_of(src: &str, offset: usize) -> usize {
-    src[..offset.min(src.len())].lines().count().max(1)
+    src.as_bytes()[..offset.min(src.len())].iter().filter(|&&b| b == b'\n').count() + 1
 }
 
 /// Parses JavaScript with oxc and prints it back, either pretty (2-space indent,
@@ -120,5 +127,13 @@ mod tests {
         let out = sql_format("select a,b from t where x=1").unwrap();
         assert!(out.starts_with("SELECT\n"), "{out}");
         assert!(out.contains("WHERE"));
+    }
+
+    #[test]
+    fn line_numbers_count_line_breaks() {
+        assert_eq!(line_of("a\nb", 0), 1);
+        assert_eq!(line_of("a\nb", 2), 2, "the first character of line 2");
+        assert_eq!(line_of("a\nb", 99), 2);
+        assert!(xml_rewrite("<a>\n</b>", true).unwrap_err().starts_with("Line 2"));
     }
 }

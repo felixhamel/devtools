@@ -178,15 +178,20 @@ app/
 ├── Cargo.toml
 ├── assets/app-icon.png
 └── src/
-    ├── main.rs          window, sidebar, title bar, home screen, ⌘K palette, saved state
-    ├── ui.rs            color theme, fonts, icons, shared widgets, editors and highlighting
+    ├── main.rs            the app: tools, selection, favorites, update loop, command-line options
+    ├── chrome.rs          sidebar and title bar
+    ├── home.rs            home screen, and what ⌘V and dropped files do there
+    ├── palette.rs         ⌘K palette
+    ├── state.rs           what is saved between launches
+    ├── ui/                theme, style, widgets, editors, property lists, text I/O, files, toasts
     └── tools/
-        ├── mod.rs       Tool trait, TextTool helper, tool registry
-        ├── detect.rs    recognizes pasted text (JWT, JSON, timestamp…) for ⌘V on the home screen
-        ├── format/      beautify/minify (css.rs and html.rs are hand-written)
-        └── *.rs         one file per tool or group of small tools
-docs/screenshots/        images used in this README
-scripts/bundle-macos.sh  builds the .app bundle and the release zip
+        ├── mod.rs         Tool trait, TextTool helper, tool registry, ⇄ Reuse menu
+        ├── detect.rs      recognizes pasted text (JWT, JSON, timestamp…) for ⌘V on the home screen
+        ├── code_compare/  diff logic, highlighting languages and the compare view
+        ├── format/        beautify/minify (css.rs and html.rs are hand-written)
+        └── *.rs           one file per tool or group of small tools
+docs/screenshots/          images used in this README
+scripts/bundle-macos.sh    builds the .app bundle and the release zip
 ```
 
 ## Adding a tool
@@ -220,4 +225,4 @@ Optional builder methods:
 | `.syntax("json")` | Highlights both panes (any syntect language name or extension: `sql`, `js`, `html`, `rs`…) |
 | `.key_value_output()` | Shows `Key: value` results as a list, with a copy button on each value |
 
-For a tool with its own interface (options, previews, several inputs), implement the `Tool` trait on a struct that holds its state, and draw it with the helpers in `ui.rs` (`split`, `toolbar`, `code_editor`, `properties`, `segmented`, `copy_button`…). `lines.rs` and `case.rs` are short examples.
+For a tool with its own interface (options, previews, several inputs), implement the `Tool` trait on a struct that holds its state, and draw it with the helpers of the `ui` module (`split`, `toolbar`, `code_editor`, `properties`, `segmented`, `copy_button`…). `lines.rs` and `case.rs` are short examples.
