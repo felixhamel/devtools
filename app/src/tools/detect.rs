@@ -36,6 +36,9 @@ pub fn detect(text: &str) -> Option<Detected> {
     if (t.starts_with('{') || t.starts_with('[')) && serde_json::from_str::<serde_json::Value>(t).is_ok() { return found("JSON Format/Validate", "JSON"); }
     if one_word && t.contains("://") && url::Url::parse(t).is_ok_and(|u| u.has_host()) { return found("URL Parser", "a URL"); }
     if UUID.is_match(t) { return found("UUID/ULID Generate/Decode", "a UUID"); }
+    if one_word && (t.parse::<ipnet::IpNet>().is_ok() || t.parse::<std::net::IpAddr>().is_ok()) {
+        return found("IP Subnet Calculator", if t.contains('/') { "a CIDR block" } else { "an IP address" });
+    }
     if ULID.is_match(t) && t.chars().any(|c| c.is_ascii_digit()) { return found("UUID/ULID Generate/Decode", "a ULID"); }
     if TIMESTAMP.is_match(t) { return found("Unix Time Converter", "a timestamp"); }
     if DATE.is_match(t) { return found("Unix Time Converter", "a date"); }
@@ -80,6 +83,9 @@ mod tests {
             ("https://example.com/search?q=rust", "URL Parser"),
             ("3f2504e0-4f89-11d3-9a0c-0305e82c3301", "UUID/ULID Generate/Decode"),
             ("01ARZ3NDEKTSV4RRFFQ69G5FAV", "UUID/ULID Generate/Decode"),
+            ("10.0.0.0/16", "IP Subnet Calculator"),
+            ("192.168.1.10", "IP Subnet Calculator"),
+            ("2600:1f18:abcd::/56", "IP Subnet Calculator"),
             ("1700000000", "Unix Time Converter"),
             ("1700000000123", "Unix Time Converter"),
             ("2026-11-18T10:30:00Z", "Unix Time Converter"),
@@ -112,7 +118,7 @@ mod tests {
     fn every_target_is_a_tool_that_accepts_input() {
         let tools = super::super::registry();
         let samples = ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln", "-----BEGIN CERTIFICATE-----", "data:image/png;base64,AA==", "{}",
-            "https://a.io", "3f2504e0-4f89-11d3-9a0c-0305e82c3301", "1700000000", "#fff", "0 * * * *", "<?xml?>", "<b>x</b>",
+            "https://a.io", "3f2504e0-4f89-11d3-9a0c-0305e82c3301", "10.0.0.0/16", "1700000000", "#fff", "0 * * * *", "<?xml?>", "<b>x</b>",
             "SELECT 1", "a%20b", "&amp;", "48656c6c6f", "SGVsbG8sIHdvcmxkIQ==", "fooBar"];
         for text in samples {
             let detected = detect(text).unwrap_or_else(|| panic!("{text} not recognized"));

@@ -4,14 +4,29 @@ use eframe::egui;
 use super::{encoding::decode_base64, Category, Tool};
 use crate::ui::{self, icon};
 
+/// Image types the Open dialog offers.
+const EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "bmp"];
+
 #[derive(Default)]
-pub struct Base64Image { text: String, path: String, info: String, error: String, texture: Option<egui::TextureHandle>, live: ui::Debounce }
+pub struct Base64Image {
+    text: String,
+    /// File name of the encoded image, if it came from a file.
+    name: String,
+    info: String,
+    error: String,
+    texture: Option<egui::TextureHandle>,
+    live: ui::Debounce,
+}
 
 impl Base64Image {
     /// Decodes `bytes` as an image and uploads it as the preview texture.
     fn show(&mut self, ctx: &egui::Context, bytes: &[u8]) {
         match load(bytes) {
-            Ok((info, image)) => { self.info = info; self.error.clear(); self.texture = Some(ctx.load_texture("base64-image", image, Default::default())); }
+            Ok((info, image)) => {
+                self.info = if self.name.is_empty() { info } else { format!("{} · {info}", self.name) };
+                self.error.clear();
+                self.texture = Some(ctx.load_texture("base64-image", image, Default::default()));
+            }
             Err(e) => { self.info.clear(); self.error = e; self.texture = None; }
         }
     }
@@ -22,17 +37,32 @@ impl Base64Image {
         match decode(&self.text) { Ok(bytes) => self.show(ctx, &bytes), Err(e) => { self.info.clear(); self.error = e; self.texture = None; } }
     }
 
-    /// Encodes image bytes as a data URI and previews them.
-    fn encode_bytes(&mut self, ctx: &egui::Context, bytes: &[u8]) {
-        match data_uri(bytes) { Ok(uri) => { self.text = uri; self.show(ctx, bytes); } Err(e) => { self.error = e; self.texture = None; } }
-    }
-
-    fn encode_file(&mut self, ctx: &egui::Context, path: &std::path::Path) {
-        match std::fs::read(path) {
-            Ok(bytes) => { self.path = path.display().to_string(); self.encode_bytes(ctx, &bytes); }
-            Err(e) => { self.error = format!("Cannot read {}: {e}", path.display()); self.texture = None; }
+    /// Encodes an image file as a data URI and previews it.
+    fn encode(&mut self, ctx: &egui::Context, name: String, bytes: &[u8]) {
+        match data_uri(bytes) {
+            Ok(uri) => { self.text = uri; self.name = name; self.show(ctx, bytes); }
+            Err(e) => { self.error = format!("{name}: {e}"); self.texture = None; }
         }
     }
+
+    fn encode_file(&mut self, ctx: &egui::Context, file: Result<(String, Vec<u8>), String>) {
+        match file { Ok((name, bytes)) => self.encode(ctx, name, &bytes), Err(e) => self.error = e }
+    }
+}
+
+/// The example: a small gradient disc on a transparent background, as PNG.
+fn sample_png() -> Vec<u8> {
+    let image = image::RgbaImage::from_fn(96, 96, |x, y| {
+        let distance = ((x as f32 - 47.5).powi(2) + (y as f32 - 47.5).powi(2)).sqrt();
+        let t = y as f32 / 95.0;
+        // Opaque inside, a one-pixel soft edge, transparent outside.
+        let alpha = ((44.0 - distance).clamp(0.0, 1.0) * 255.0) as u8;
+        let mix = |a: f32, b: f32| (a * (1.0 - t) + b * t) as u8;
+        image::Rgba([mix(130.0, 110.0), mix(220.0, 170.0), mix(169.0, 255.0), alpha])
+    });
+    let mut png = Vec::new();
+    image.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).expect("encoding a PNG in memory cannot fail");
+    png
 }
 
 impl Tool for Base64Image {
@@ -44,44 +74,49 @@ impl Tool for Base64Image {
         let ctx = ui.ctx().clone();
         let area = ui.available_rect_before_wrap();
         // Files dropped anywhere on the window while this tool is open.
-        for file in ctx.input(|i| i.raw.dropped_files.clone()) {
-            if let Some(path) = &file.path { self.encode_file(&ctx, path); }
-            else if let Some(bytes) = &file.bytes { self.encode_bytes(&ctx, bytes); }
-        }
-        ui::description(ui, "Drop an image on the window or enter its path to encode it, or paste Base64 / a data URI to decode it. PNG, JPEG, WebP and BMP.");
+        for file in ctx.input(|i| i.raw.dropped_files.clone()) { self.encode_file(&ctx, ui::read_dropped(&file)); }
+        ui::description(ui, "Drop or open an image to get its data URI, or paste Base64 / a data URI to preview it. PNG, JPEG, WebP and BMP.");
         ui.add_space(10.0);
         ui::split(ui, |left, right| {
-            ui::toolbar(left, "Input:", |ui| {
-                if ui::paste_button(ui, &mut self.text, &mut self.error) { self.live.touch(ui.ctx()); }
+            ui::toolbar(left, "Data URI:", |ui| {
+                if ui::paste_button(ui, &mut self.text, &mut self.error) { self.name.clear(); self.live.touch(ui.ctx()); }
+                if ui::sample_button(ui) { self.encode(&ctx, "sample.png".into(), &sample_png()); }
                 if ui::clear_button(ui) { *self = Self::default(); }
-                ui::copy_button(ui, &self.text);
                 ui.separator();
-                if ui.add(ui::action_button("Decode", true)).clicked() { self.decode_text(&ctx); }
-            });
-            left.horizontal(|ui| {
-                let encode = ui.add(ui::icon_button(icon::FOLDER_OPEN, "Encode file", false)).clicked();
-                let field = ui::editor_frame().inner_margin(5).show(ui, |ui| {
-                    ui.add(egui::TextEdit::singleline(&mut self.path).frame(false).font(egui::TextStyle::Monospace)
-                        .desired_width(f32::INFINITY).hint_text("/path/to/image.png"))
-                }).inner;
-                if encode || (field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
-                    let path = std::path::PathBuf::from(self.path.trim());
-                    self.encode_file(&ctx, &path);
+                if ui.add(ui::icon_button(icon::FOLDER_OPEN, "Open image", false)).clicked() {
+                    if let Some(path) = ui::pick_files("Open an image to encode", &EXTENSIONS).first() { self.encode_file(&ctx, ui::read_path(path)); }
                 }
+                ui::copy_button(ui, &self.text);
             });
-            left.add_space(6.0);
-            if ui::fill_editor(left, "base64", &mut self.text, "data:image/png;base64,iVBORw0KGgo…").changed() { self.live.touch(left.ctx()); }
+            if ui::fill_editor(left, "base64", &mut self.text, "data:image/png;base64,iVBORw0KGgo…").changed() {
+                self.name.clear();
+                self.live.touch(left.ctx());
+            }
             // Decode as the Base64 is pasted or typed.
             if self.live.due(left.ctx(), self.text.len()) { self.decode_text(&ctx); }
             ui::toolbar(right, "Preview:", |ui| { ui.label(egui::RichText::new(&self.info).color(ui::MUTED)); });
             ui::error_label(right, &self.error);
-            ui::preview_frame(right, |ui| {
-                if let Some(texture) = &self.texture {
-                    ui.add(egui::Image::new(texture).max_width(ui.available_width()).max_height(ui.available_height()));
+            ui::preview_frame(right, |ui| match &self.texture {
+                Some(texture) => {
+                    // Shown at its own size (shrunk to fit), centered.
+                    let area = ui.available_size();
+                    let size = texture.size_vec2() * (area.x / texture.size_vec2().x).min(area.y / texture.size_vec2().y).min(1.0);
+                    ui::center_vertically(ui, size.y);
+                    ui.vertical_centered(|ui| ui.add(egui::Image::new(texture).fit_to_exact_size(size)));
                 }
+                None => ui::empty_state(ui, icon::IMAGE, "Drop an image on the window, open one, or paste a data URI."),
             });
         });
         ui::drop_hint(&ctx, area, "Drop an image to encode it");
+    }
+
+    fn load_sample(&mut self) {
+        // The preview needs the egui context: it is decoded on the next frame.
+        if let Ok(uri) = data_uri(&sample_png()) {
+            self.text = uri;
+            self.name = "sample.png".into();
+            self.live.trigger();
+        }
     }
 
     fn accepts_input(&self) -> bool { true }
@@ -114,7 +149,7 @@ fn load(bytes: &[u8]) -> Result<(String, egui::ColorImage), String> {
     let format = image::guess_format(bytes).map_err(|_| "Unsupported or unrecognized image format".to_string())?;
     let image = image::load_from_memory_with_format(bytes, format).map_err(|e| e.to_string())?.into_rgba8();
     let (w, h) = image.dimensions();
-    let info = format!("{format:?} · {w}×{h} px · {} bytes", bytes.len());
+    let info = format!("{} · {w}×{h} px · {}", format!("{format:?}").to_uppercase(), ui::human_size(bytes.len()));
     Ok((info, egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], image.as_raw())))
 }
 

@@ -27,6 +27,8 @@ struct App {
     selected: Option<usize>,
     /// Recently opened tools, most recent first.
     recent: Vec<usize>,
+    /// Starred tools, in the order they were starred.
+    favorites: Vec<usize>,
     /// When the current tool was opened (`ctx` time), for the fade-in.
     opened_at: f64,
     search: String,
@@ -34,7 +36,17 @@ struct App {
     palette: Option<Palette>,
     logo: egui::TextureHandle,
     screenshot: Option<Screenshot>,
+    /// `--screenshot` mode: the saved state is neither read nor written.
+    checking: bool,
 }
+
+/// What DevUtils remembers between launches, by tool name so that it
+/// survives tools being added or reordered. The tools' inputs are never
+/// saved: they may hold tokens or secrets. eframe also restores the window's
+/// size and position and the sidebar's width.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+#[serde(default)]
+struct Saved { last_tool: Option<String>, recent: Vec<String>, favorites: Vec<String>, sidebar_hidden: bool }
 
 /// The ⌘K palette: type to find a tool or a command, ↑↓ to choose, ↵ to run.
 #[derive(Default)]
@@ -42,7 +54,7 @@ struct Palette { query: String, selected: usize }
 
 /// What a palette row does.
 #[derive(Clone, Copy, PartialEq)]
-enum Command { Tool(usize), Home, ToggleSidebar, PasteAndDetect }
+enum Command { Tool(usize), Home, ToggleSidebar, PasteAndDetect, ToggleFavorite(usize) }
 
 /// `--screenshot <path>` mode: render, save a PNG of the window and exit.
 /// Used to check that a build starts and draws.
@@ -102,19 +114,56 @@ impl App {
         let logo = egui::ColorImage::from_rgba_unmultiplied([logo.width() as usize, logo.height() as usize], logo.as_raw());
         let mut tools = tools::registry();
         tools::publish_directory(&cc.egui_ctx, &tools);
-        let selected = args.tool.and_then(|wanted| tools.iter().position(|t| t.name().eq_ignore_ascii_case(&wanted)));
+        let checking = args.screenshot.is_some();
+        let saved: Saved = if checking { Saved::default() } else { cc.storage.and_then(|s| eframe::get_value(s, eframe::APP_KEY)).unwrap_or_default() };
+        let indices = |names: &[String]| -> Vec<usize> { names.iter().filter_map(|n| tools.iter().position(|t| t.name() == n)).collect() };
+        let (mut recent, favorites) = (indices(&saved.recent), indices(&saved.favorites));
+        // `--tool` wins over the tool that was open last time.
+        let selected = match args.tool {
+            Some(wanted) => tools.iter().position(|t| t.name().eq_ignore_ascii_case(&wanted)),
+            None => saved.last_tool.and_then(|name| tools.iter().position(|t| t.name() == name)),
+        };
         if let (Some(i), true) = (selected, args.sample) { tools[i].load_sample(); }
+        if let Some(i) = selected { recent.retain(|&r| r != i); recent.insert(0, i); }
         Self {
             tools,
             selected,
-            recent: selected.into_iter().collect(),
+            recent,
+            favorites,
             opened_at: f64::NEG_INFINITY,
             search: String::new(),
-            show_sidebar: true,
+            show_sidebar: !saved.sidebar_hidden,
             palette: args.palette.then(Palette::default),
             logo: cc.egui_ctx.load_texture("logo", logo, Default::default()),
             screenshot: args.screenshot.map(|path| Screenshot { path, frames: 0 }),
+            checking,
         }
+    }
+
+    /// Stars or unstars tool `i`.
+    fn toggle_favorite(&mut self, ctx: &egui::Context, i: usize) {
+        let name = self.tools[i].name();
+        if let Some(at) = self.favorites.iter().position(|&f| f == i) {
+            self.favorites.remove(at);
+            ui::toast(ctx, icon::STAR, format!("Removed {name} from favorites"));
+        } else {
+            self.favorites.push(i);
+            ui::toast(ctx, icon::STAR, format!("Added {name} to favorites"));
+        }
+    }
+
+    /// The right-click menu of a tool in the sidebar or on the home screen;
+    /// returns the tool to star or unstar.
+    fn favorite_menu(&self, response: &egui::Response, i: usize) -> Option<usize> {
+        let mut toggle = None;
+        response.context_menu(|ui| {
+            let label = if self.favorites.contains(&i) { "Remove from favorites" } else { "Add to favorites" };
+            if ui.button(format!("{}  {label}", icon::STAR)).clicked() {
+                toggle = Some(i);
+                ui.close_menu();
+            }
+        });
+        toggle
     }
 
     fn tool_index(&self, name: &str) -> Option<usize> { self.tools.iter().position(|t| t.name() == name) }
@@ -191,25 +240,28 @@ impl App {
                 let search = self.search_field(ui);
                 if ctx.input(|i| i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::F)) { search.request_focus(); }
                 ui.add_space(8.0);
-                egui::TopBottomPanel::bottom("sidebar_footer").frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 6))).show_inside(ui, |ui| {
-                    ui.vertical_centered(|ui| { ui.label(egui::RichText::new(concat!("DevUtils ", env!("CARGO_PKG_VERSION"))).small().color(theme::SUBTLE)); });
-                });
                 let query = self.search.to_lowercase();
                 let visible: Vec<usize> = (0..self.tools.len()).filter(|&i| self.tools[i].name().to_lowercase().contains(&query)).collect();
-                let mut clicked = None;
+                let (mut clicked, mut toggle) = (None, None);
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    for group in Category::ALL {
-                        let mut members = visible.iter().copied().filter(|&i| self.tools[i].category() == group).peekable();
-                        if members.peek().is_none() { continue; }
+                    // Favorites first (they also stay in their category), then every category.
+                    let favorites: Vec<usize> = self.favorites.iter().copied().filter(|i| visible.contains(i)).collect();
+                    let groups = std::iter::once(("Favorites", favorites))
+                        .chain(Category::ALL.into_iter().map(|c| (c.label(), visible.iter().copied().filter(|&i| self.tools[i].category() == c).collect())));
+                    for (label, members) in groups {
+                        if members.is_empty() { continue; }
                         ui.add_space(10.0);
-                        ui.label(egui::RichText::new(group.label()).small().strong().color(theme::SUBTLE));
+                        ui.label(egui::RichText::new(label).small().strong().color(theme::SUBTLE));
                         ui.add_space(3.0);
                         for i in members {
-                            if self.tool_row(ui, i).clicked() { clicked = Some(i); }
+                            let row = self.tool_row(ui, i);
+                            if row.clicked() { clicked = Some(i); }
+                            toggle = toggle.or(self.favorite_menu(&row, i));
                         }
                     }
                 });
                 if let Some(i) = clicked { self.open(ctx, Some(i)); }
+                if let Some(i) = toggle { self.toggle_favorite(ctx, i); }
             });
     }
 
@@ -254,7 +306,7 @@ impl App {
     fn home(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let area = ui.max_rect();
-        let mut clicked = None;
+        let (mut clicked, mut toggle) = (None, None);
         let mut paste = false;
         let mut palette = false;
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -277,6 +329,29 @@ impl App {
                     });
                     ui.add_space(18.0);
                     (paste, palette) = smart_card(ui);
+                    const GAP: f32 = 10.0;
+                    let columns = ((width + GAP) / (210.0 + GAP)).floor().max(2.0) as usize;
+                    let card_width = (width - GAP * (columns - 1) as f32) / columns as f32;
+                    // Favorites, then every tool grouped like the sidebar.
+                    let favorites = (!self.favorites.is_empty()).then(|| ("Favorites", theme::AMBER, self.favorites.clone()));
+                    let groups: Vec<(&str, egui::Color32, Vec<usize>)> = favorites.into_iter()
+                        .chain(Category::ALL.into_iter().map(|c| (c.label(), c.color(), (0..self.tools.len()).filter(|&i| self.tools[i].category() == c).collect())))
+                        .collect();
+                    if let Some((label, color, members)) = groups.first().filter(|_| !self.favorites.is_empty()) {
+                        ui.add_space(18.0);
+                        section_title(ui, label, *color);
+                        for row in members.chunks(columns) {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = GAP;
+                                for &i in row {
+                                    let card = tool_card(ui, self.tools[i].as_ref(), card_width);
+                                    if card.clicked() { clicked = Some(i); }
+                                    toggle = toggle.or(self.favorite_menu(&card, i));
+                                }
+                            });
+                            ui.add_space(GAP - ui.spacing().item_spacing.y);
+                        }
+                    }
                     if !self.recent.is_empty() {
                         ui.add_space(18.0);
                         section_title(ui, "Recent", theme::TEXT);
@@ -289,19 +364,16 @@ impl App {
                             }
                         });
                     }
-                    // Every tool, grouped like the sidebar.
-                    const GAP: f32 = 10.0;
-                    let columns = ((width + GAP) / (210.0 + GAP)).floor().max(2.0) as usize;
-                    let card_width = (width - GAP * (columns - 1) as f32) / columns as f32;
-                    for group in Category::ALL {
-                        let members: Vec<usize> = (0..self.tools.len()).filter(|&i| self.tools[i].category() == group).collect();
+                    for (label, color, members) in groups.iter().skip(usize::from(!self.favorites.is_empty())) {
                         ui.add_space(18.0);
-                        section_title(ui, group.label(), group.color());
+                        section_title(ui, label, *color);
                         for row in members.chunks(columns) {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = GAP;
                                 for &i in row {
-                                    if tool_card(ui, self.tools[i].as_ref(), card_width).clicked() { clicked = Some(i); }
+                                    let card = tool_card(ui, self.tools[i].as_ref(), card_width);
+                                    if card.clicked() { clicked = Some(i); }
+                                    toggle = toggle.or(self.favorite_menu(&card, i));
                                 }
                             });
                             ui.add_space(GAP - ui.spacing().item_spacing.y);
@@ -309,13 +381,14 @@ impl App {
                     }
                     ui.add_space(24.0);
                     ui.vertical_centered(|ui| {
-                        ui.label(egui::RichText::new("⌘K search  ·  ⌘V paste anything  ·  ⌘1 sidebar  ·  ⌘⇧F filter the sidebar").small().color(theme::SUBTLE));
+                        ui.label(egui::RichText::new("⌘K search  ·  ⌘V paste anything  ·  ⌘D star a tool  ·  ⌘1 sidebar  ·  ⌘⇧F filter the sidebar").small().color(theme::SUBTLE));
                     });
                     ui.add_space(12.0);
                 });
             });
         });
         if let Some(i) = clicked { self.open(&ctx, Some(i)); }
+        if let Some(i) = toggle { self.toggle_favorite(&ctx, i); }
         if palette { self.palette = Some(Palette::default()); }
         if paste {
             match ui::clipboard_text() {
@@ -343,6 +416,18 @@ impl App {
         }
         if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() { self.palette = Some(Palette::default()); }
 
+        // A star at the right end stars the open tool.
+        if let Some(i) = self.selected {
+            let starred = self.favorites.contains(&i);
+            let button = egui::Rect::from_min_size(egui::pos2(bar_rect.right() - 28.0, bar_rect.center().y - 13.0), egui::vec2(28.0, 26.0));
+            let tip = if starred { "Remove from favorites (⌘D)" } else { "Add to favorites (⌘D)" };
+            let response = ui.interact(button, ui.id().with("title_star"), egui::Sense::click()).on_hover_text(tip);
+            if response.hovered() { ui.painter().rect_filled(button, 5.0, theme::BUTTON_HOVER); }
+            let color = if starred { theme::AMBER } else { theme::ICON };
+            ui.painter().text(button.center(), egui::Align2::CENTER_CENTER, icon::STAR, egui::FontId::proportional(17.0), color);
+            if response.clicked() { self.toggle_favorite(&ui.ctx().clone(), i); }
+        }
+
         let mut x = bar_rect.left();
         for (glyph, tip, action) in [(icon::SIDEBAR_SIMPLE, "Toggle sidebar (⌘1)", 0), (icon::HOUSE, "Home", 1)] {
             let button = egui::Rect::from_min_size(egui::pos2(x, bar_rect.center().y - 13.0), egui::vec2(28.0, 26.0));
@@ -356,16 +441,18 @@ impl App {
         }
     }
 
-    /// Palette rows for `query`: best matches first. With no query: recent
-    /// tools, the commands, then every tool in sidebar order.
+    /// Palette rows for `query`: best matches first. With no query:
+    /// favorites, recent tools, the commands, then every tool in sidebar order.
     fn palette_entries(&self, query: &str) -> Vec<Command> {
-        let commands = [Command::PasteAndDetect, Command::Home, Command::ToggleSidebar];
+        let star = self.selected.map(Command::ToggleFavorite);
+        let commands: Vec<Command> = [Command::PasteAndDetect, Command::Home, Command::ToggleSidebar].into_iter().chain(star).collect();
         let by_category = Category::ALL.into_iter().flat_map(|c| (0..self.tools.len()).filter(move |&i| self.tools[i].category() == c));
         let query = query.trim();
         if query.is_empty() {
-            let recent = self.recent.iter().map(|&i| Command::Tool(i));
-            let others: Vec<usize> = by_category.filter(|i| !self.recent.contains(i)).collect();
-            return recent.chain(commands).chain(others.into_iter().map(Command::Tool)).collect();
+            let mut first: Vec<usize> = self.favorites.clone();
+            first.extend(self.recent.iter().filter(|i| !self.favorites.contains(i)));
+            let others: Vec<usize> = by_category.filter(|i| !first.contains(i)).collect();
+            return first.into_iter().map(Command::Tool).chain(commands).chain(others.into_iter().map(Command::Tool)).collect();
         }
         let mut scored: Vec<(i32, Command)> = by_category.map(Command::Tool).chain(commands).filter_map(|command| {
             let (_, name, detail, _) = self.describe(command);
@@ -381,7 +468,12 @@ impl App {
         match command {
             Command::Tool(i) => {
                 let tool = &self.tools[i];
-                (tool.icon(), tool.name().to_owned(), tool.category().label().to_owned(), tool.category().color())
+                let detail = if self.favorites.contains(&i) { format!("★ {}", tool.category().label()) } else { tool.category().label().to_owned() };
+                (tool.icon(), tool.name().to_owned(), detail, tool.category().color())
+            }
+            Command::ToggleFavorite(i) => {
+                let action = if self.favorites.contains(&i) { "Remove from favorites" } else { "Add to favorites" };
+                (icon::STAR, format!("{action}: {}", self.tools[i].name()), "⌘D".into(), theme::AMBER)
             }
             Command::PasteAndDetect => (icon::MAGIC_WAND, "Paste and detect".into(), "Open the clipboard in the right tool".into(), theme::ACCENT),
             Command::Home => (icon::HOUSE, "Home".into(), "Back to the home screen".into(), theme::ACCENT),
@@ -394,6 +486,7 @@ impl App {
             Command::Tool(i) => self.open(ctx, Some(i)),
             Command::Home => self.open(ctx, None),
             Command::ToggleSidebar => self.show_sidebar = !self.show_sidebar,
+            Command::ToggleFavorite(i) => self.toggle_favorite(ctx, i),
             Command::PasteAndDetect => match ui::clipboard_text() {
                 Ok(text) => self.open_text(ctx, &text),
                 Err(e) => ui::toast(ctx, icon::WARNING, e),
@@ -569,6 +662,9 @@ impl eframe::App for App {
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::K)) {
             self.palette = if self.palette.is_some() { None } else { Some(Palette::default()) };
         }
+        if let Some(i) = self.selected.filter(|_| ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::D))) {
+            self.toggle_favorite(ctx, i);
+        }
         if self.selected.is_none() && self.palette.is_none() { self.home_input(ctx); }
         if self.show_sidebar { self.sidebar(ctx); }
         let frame = egui::Frame::central_panel(&ctx.style()).inner_margin(egui::Margin { left: 12, right: 12, top: 0, bottom: 12 });
@@ -603,6 +699,22 @@ impl eframe::App for App {
         }
         ui::show_toast(ctx);
     }
+
+    /// Called by eframe now and then and when quitting: see [`Saved`].
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        if self.checking { return; }
+        let names = |list: &[usize]| list.iter().map(|&i| self.tools[i].name().to_owned()).collect();
+        let saved = Saved {
+            last_tool: self.selected.map(|i| self.tools[i].name().to_owned()),
+            recent: names(&self.recent),
+            favorites: names(&self.favorites),
+            sidebar_hidden: !self.show_sidebar,
+        };
+        eframe::set_value(storage, eframe::APP_KEY, &saved);
+    }
+
+    /// Panel widths and the like are kept too, except in `--screenshot` mode.
+    fn persist_egui_memory(&self) -> bool { !self.checking }
 }
 
 fn main() -> eframe::Result<()> {
@@ -623,6 +735,12 @@ fn main() -> eframe::Result<()> {
         .with_active(!checking);
     #[allow(unused_mut)]
     let mut options = eframe::NativeOptions { viewport, ..Default::default() };
+    if checking {
+        // Screenshots start from a clean state and must not change the user's:
+        // point eframe at a file that is never written (nothing is saved).
+        options.persist_window = false;
+        options.persistence_path = Some(std::env::temp_dir().join("devutils-screenshot-state.ron"));
+    }
     // In screenshot mode, do not steal focus from the app the user is working in.
     #[cfg(target_os = "macos")]
     if checking { options.event_loop_builder = Some(Box::new(|builder| { use winit::platform::macos::EventLoopBuilderExtMacOS; builder.with_activate_ignoring_other_apps(false); })); }
@@ -634,6 +752,29 @@ fn main() -> eframe::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An in-memory stand-in for eframe's file storage.
+    #[derive(Default)]
+    struct MemoryStorage(std::collections::HashMap<String, String>);
+
+    impl eframe::Storage for MemoryStorage {
+        fn get_string(&self, key: &str) -> Option<String> { self.0.get(key).cloned() }
+        fn set_string(&mut self, key: &str, value: String) { self.0.insert(key.to_owned(), value); }
+        fn flush(&mut self) {}
+    }
+
+    #[test]
+    fn saved_state_round_trips() {
+        let mut storage = MemoryStorage::default();
+        let saved = Saved { last_tool: Some("JWT Debugger".into()), recent: vec!["JWT Debugger".into()], favorites: vec!["IP Subnet Calculator".into()], sidebar_hidden: true };
+        eframe::set_value(&mut storage, eframe::APP_KEY, &saved);
+        let back: Saved = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
+        assert_eq!((back.last_tool, back.favorites, back.sidebar_hidden), (saved.last_tool, saved.favorites, true));
+        // State saved by an older version (fewer fields) still loads.
+        eframe::Storage::set_string(&mut storage, eframe::APP_KEY, "(recent: [\"Hash Generator\"])".into());
+        let old: Saved = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
+        assert_eq!((old.recent, old.favorites.len(), old.sidebar_hidden), (vec!["Hash Generator".to_owned()], 0, false));
+    }
 
     #[test]
     fn fuzzy_matching_prefers_substrings_at_word_starts() {

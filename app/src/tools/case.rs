@@ -3,7 +3,7 @@
 use eframe::egui;
 use unicode_normalization::{char::is_combining_mark, UnicodeNormalization};
 use super::{text::{capitalize, words}, Category, Tool};
-use crate::ui::{self, icon, theme};
+use crate::ui::{self, icon};
 
 const SAMPLE: &str = "Parse HTTP response — été 2024";
 
@@ -61,30 +61,12 @@ impl Tool for CaseConverter {
             changed |= ui::fill_editor(left, "input", &mut self.input, "Text or identifier to convert…").changed();
             if changed { self.update(); }
             ui::toolbar(right, "Conversions:", |_| {});
-            ui::preview_frame(right, |ui| {
-                if self.results.is_empty() {
-                    ui.label(egui::RichText::new("Type something on the left.").color(theme::SUBTLE));
-                    return;
-                }
-                const NAME_WIDTH: f32 = 120.0;
-                const BUTTON_WIDTH: f32 = 36.0;
-                for (i, (name, value)) in self.results.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        // Fixed-width name and value columns keep the copy buttons aligned.
-                        ui.allocate_ui_with_layout(egui::vec2(NAME_WIDTH, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            ui.set_min_width(NAME_WIDTH);
-                            ui.label(egui::RichText::new(*name).color(theme::MUTED));
-                        });
-                        let width = (ui.available_width() - BUTTON_WIDTH).max(40.0);
-                        ui.allocate_ui_with_layout(egui::vec2(width, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            ui.set_min_width(width);
-                            ui.add(egui::Label::new(egui::RichText::new(value).monospace().color(theme::TEXT_STRONG)).selectable(true).truncate());
-                        });
-                        ui::copy_icon(ui, value, ("case", i));
-                    });
-                    ui.add_space(2.0);
-                }
-            });
+            if self.results.is_empty() {
+                ui::preview_frame(right, |ui| ui::empty_state(ui, icon::TEXT_AA, "Type something on the left."));
+            } else {
+                let rows: Vec<ui::Property> = self.results.iter().map(|(key, value)| ui::Property::Pair { key, value, indent: false }).collect();
+                ui::property_list(right, "conversions", &rows);
+            }
         });
     }
 

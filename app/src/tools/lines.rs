@@ -58,9 +58,8 @@ impl Tool for Lines {
                 if ui::sample_button(ui) { self.load_sample(); }
                 if ui::clear_button(ui) { self.input.clear(); self.output.clear(); self.error.clear(); }
                 ui.separator();
-                for (i, (label, _, _)) in ACTIONS.iter().enumerate() {
-                    if ui.add(ui::action_button(*label, i == self.action)).clicked() { self.action = i; run_now = true; }
-                }
+                let modes: Vec<(usize, &str)> = ACTIONS.iter().enumerate().map(|(i, (label, _, _))| (i, *label)).collect();
+                run_now |= ui::segmented(ui, &mut self.action, &modes);
             });
             left.horizontal_wrapped(|ui| {
                 for (value, label) in [(&mut self.ignore_case, "Ignore case"), (&mut self.trim_lines, "Trim whitespace"), (&mut self.dedupe, "Remove duplicates"), (&mut self.sort_desc, "Descending")] {

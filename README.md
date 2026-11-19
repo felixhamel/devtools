@@ -17,15 +17,18 @@ A native macOS app that gathers the small tools developers reach for every day �
 |---|---|
 | **Date & scheduling** | Unix Time Converter (calendar, time zones, relative time) · Cron Job Parser (description + next runs) |
 | **Data conversion** | JSON Format/Validate (indent, sorted keys, tree view) · URL Parser (editable components and parameters) |
+| **Network** | IP Subnet Calculator (IPv4 and IPv6 CIDR details, AWS usable and reserved addresses, split into subnets, overlap check for VPC peering) |
 | **Encoding** | Base64 (text or files, URL-safe, hex dump of binary) · Base64 Image (drag & drop, data URIs) · URL Encode/Decode (component or full URL) · HTML Entities · Backslash Escape/Unescape · Hex ↔ ASCII |
 | **Security & identifiers** | JWT Debugger (expiry status, HS256/384/512 verification) · UUID v4 / v7 and ULID (bulk, timestamps) · Hash Generator (MD5, SHA-1, SHA-256, SHA-512) · Password Generator (passwords and passphrases) · X.509 Certificate Decoder |
 | **Text & generators** | RegExp Tester (highlighted matches, replace, common patterns) · QR Code Reader/Generator · String Inspector (hidden characters, line endings, Unicode names) · Case Converter (camel, snake, kebab, slug…) · Color Converter (picker, CSS formats, WCAG contrast) · Line Sort/Dedupe |
 | **Compare** | Code Compare (side by side or unified, changed words highlighted, syntax highlighting, folded unchanged lines, copy as a patch) · Image Compare (swipe slider, side by side, onion skin, difference map with tolerance, zoom and pixel colors) |
 | **Code & markup** | Number Base Converter · HTML, CSS/SCSS, JS and XML Beautify/Minify · SQL Formatter |
 
-Most tools show the input on the left and the result on the right, and update **as you type**. Code is syntax-highlighted (JSON, SQL, JS, HTML, CSS, XML…), and every tool has buttons to paste from the clipboard, load a **Sample** and copy the result. The **⇄ Reuse** menu sends a result back as input, or to another tool — e.g. decode Base64, then send the JSON to the formatter.
+Most tools show the input on the left and the result on the right, and update **as you type**. Code is syntax-highlighted (JSON, SQL, JS, HTML, CSS, XML…), and every tool has buttons to paste from the clipboard, load a **Sample** and copy the result. Results shown as a list (hashes, color formats, dates, certificate fields…) have a copy button on each value. The **⇄ Reuse** menu sends a result back as input, or to another tool — e.g. decode Base64, then send the JSON to the formatter.
 
-On the home screen, **press ⌘V to paste anything**: DevUtils recognizes JWTs, JSON, timestamps and dates, UUIDs and ULIDs, URLs, colors, cron expressions, certificates, Base64 and more, and opens the right tool with it. Dropping files works the same way — two images open in Image Compare, two text files in Code Compare. **⌘K** opens a palette to jump to any tool from anywhere.
+On the home screen, **press ⌘V to paste anything**: DevUtils recognizes JWTs, JSON, timestamps and dates, UUIDs and ULIDs, IP addresses and CIDR blocks, URLs, colors, cron expressions, certificates, Base64 and more, and opens the right tool with it. Dropping files works the same way — two images open in Image Compare, two text files in Code Compare. **⌘K** opens a palette to jump to any tool from anywhere.
+
+Star the tools you use most (⌘D, the ☆ in the title bar, or right-click a tool): they appear first in the sidebar, on the home screen and in the palette. DevUtils remembers between launches the open tool, recent tools, favorites, the sidebar and the window's size and position, in `~/Library/Application Support/DevUtils/app.ron`. What you type in the tools is never saved, since it may contain tokens or secrets.
 
 ### Keyboard shortcuts
 
@@ -33,6 +36,7 @@ On the home screen, **press ⌘V to paste anything**: DevUtils recognizes JWTs, 
 |---|---|
 | ⌘K | Open the palette: find a tool or a command |
 | ⌘V (home screen) | Open the clipboard's content in the right tool |
+| ⌘D | Add the open tool to the favorites, or remove it |
 | ⌘1 | Show / hide the sidebar |
 | ⌘⇧F | Filter the sidebar |
 

@@ -79,6 +79,13 @@ impl StringInspector {
     fn update(&mut self) { (self.stats, self.specials) = inspect(&self.input); }
 
     fn table(&self, ui: &mut egui::Ui) {
+        // Long character names scroll sideways instead of overflowing the frame.
+        egui::ScrollArea::horizontal().id_salt("inspector-table").show(ui, |ui| self.grid(ui));
+        let total = self.input.chars().count();
+        if total > TABLE_LIMIT { ui.label(egui::RichText::new(format!("… {} more characters", total - TABLE_LIMIT)).color(theme::SUBTLE)); }
+    }
+
+    fn grid(&self, ui: &mut egui::Ui) {
         egui::Grid::new("inspector-chars").num_columns(5).spacing([12.0, 4.0]).striped(true).show(ui, |ui| {
             for header in ["#", "Char", "Code point", "UTF-8", "Name"] { ui.label(egui::RichText::new(header).small().color(theme::SUBTLE)); }
             ui.end_row();
@@ -93,8 +100,6 @@ impl StringInspector {
                 ui.end_row();
             }
         });
-        let total = self.input.chars().count();
-        if total > TABLE_LIMIT { ui.label(egui::RichText::new(format!("… {} more characters", total - TABLE_LIMIT)).color(theme::SUBTLE)); }
     }
 }
 
@@ -120,7 +125,7 @@ impl Tool for StringInspector {
             let stats_height = (right.available_height() * 0.42).max(120.0);
             right.allocate_ui(egui::vec2(right.available_width(), stats_height), |ui| {
                 ui::toolbar(ui, "Statistics:", |ui| ui::copy_button(ui, &self.stats));
-                ui::code_editor(ui, "stats", &mut self.stats.clone(), "", Highlight::KeyValue);
+                ui::properties(ui, "stats", &self.stats);
             });
             right.add_space(8.0);
             ui::toolbar(right, "Characters:", |_| {});

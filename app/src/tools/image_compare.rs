@@ -51,19 +51,12 @@ impl Default for ImageCompare {
     }
 }
 
-fn human_size(bytes: usize) -> String {
-    match bytes {
-        b if b < 1024 => format!("{b} B"),
-        b if b < 1024 * 1024 => format!("{:.1} KB", b as f64 / 1024.0),
-        b => format!("{:.1} MB", b as f64 / (1024.0 * 1024.0)),
-    }
-}
-
 /// Decodes an image file into pixels and a one-line summary (format, size, bytes).
 fn decode(name: &str, bytes: &[u8]) -> Result<(String, RgbaImage), String> {
     let format = image::guess_format(bytes).map_err(|_| format!("{name}: unsupported or unrecognized image format"))?;
     let pixels = image::load_from_memory_with_format(bytes, format).map_err(|e| format!("{name}: {e}"))?.into_rgba8();
-    Ok((format!("{format:?} · {}×{} · {}", pixels.width(), pixels.height(), human_size(bytes.len())), pixels))
+    let format = format!("{format:?}").to_uppercase();
+    Ok((format!("{format} · {}×{} · {}", pixels.width(), pixels.height(), ui::human_size(bytes.len())), pixels))
 }
 
 /// Uploads `pixels` as a texture, shrunk first if the GPU cannot hold it.
@@ -478,7 +471,7 @@ mod tests {
         RgbaImage::from_pixel(3, 2, image::Rgba([1, 2, 3, 255])).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
         let (info, pixels) = decode("x.png", &png).unwrap();
         assert_eq!(pixels.dimensions(), (3, 2));
-        assert_eq!(info, format!("Png · 3×2 · {} B", png.len()));
+        assert_eq!(info, format!("PNG · 3×2 · {} B", png.len()));
         assert!(decode("x.txt", b"hello").is_err());
     }
 }

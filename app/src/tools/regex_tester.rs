@@ -125,7 +125,7 @@ impl Tool for RegexTester {
                 right.add_space(8.0);
             }
             ui::toolbar(right, "Matches:", |ui| ui::copy_button(ui, &self.output));
-            ui::code_editor(right, "matches", &mut self.output, "", Highlight::KeyValue);
+            ui::properties(right, "matches", &self.output);
         });
     }
 

@@ -42,7 +42,9 @@ pub fn html_entity() -> Box<dyn Tool> {
         ("Encode", |s| Ok(s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;"))),
         // Every named entity (&eacute;, &nbsp;…) and numeric ones (&#169;, &#x27;).
         ("Decode", |s| Ok(html_escape::decode_html_entities(s).into_owned())),
-    ]).sample(r#"<a href="/menu">Café & "thé"</a>"#).syntax("html"))
+    ])
+    .describe("Encode turns & < > \" ' into entities; Decode understands every named entity (&eacute;, &nbsp;…) and numeric ones.")
+    .sample(r#"<a href="/menu">Café & "thé"</a>"#).syntax("html"))
 }
 
 pub fn backslash() -> Box<dyn Tool> {

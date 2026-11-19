@@ -28,6 +28,7 @@ mod lines;
 mod password;
 mod qr;
 mod regex_tester;
+mod subnet;
 mod security;
 mod text;
 mod unix_time;
@@ -36,15 +37,16 @@ mod x509;
 
 /// Sidebar groups, shown in the order of [`Category::ALL`].
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Category { Date, Data, Encoding, Security, Text, Compare, Code }
+pub enum Category { Date, Data, Network, Encoding, Security, Text, Compare, Code }
 
 impl Category {
-    pub const ALL: [Category; 7] = [Category::Date, Category::Data, Category::Encoding, Category::Security, Category::Text, Category::Compare, Category::Code];
+    pub const ALL: [Category; 8] = [Category::Date, Category::Data, Category::Network, Category::Encoding, Category::Security, Category::Text, Category::Compare, Category::Code];
 
     pub fn label(self) -> &'static str {
         match self {
             Category::Date => "Date & scheduling",
             Category::Data => "Data conversion",
+            Category::Network => "Network",
             Category::Encoding => "Encoding",
             Category::Security => "Security & identifiers",
             Category::Text => "Text & generators",
@@ -59,6 +61,7 @@ impl Category {
         match self {
             Category::Date => theme::AMBER,
             Category::Data => theme::BLUE,
+            Category::Network => theme::LIME,
             Category::Encoding => theme::VIOLET,
             Category::Security => theme::ROSE,
             Category::Text => theme::ACCENT,
@@ -249,6 +252,7 @@ pub fn registry() -> Vec<Box<dyn Tool>> {
         Box::new(regex_tester::RegexTester::default()),
         encoding::url(),
         Box::new(url_parser::UrlParser::default()),
+        Box::new(subnet::SubnetCalculator::default()),
         encoding::html_entity(),
         encoding::backslash(),
         Box::new(identifiers::Identifiers::default()),

@@ -61,13 +61,17 @@ impl Tool for Qr {
             ui::toolbar(left, "Content:", |ui| {
                 ui::paste_button(ui, &mut self.text, &mut self.error);
                 if ui::sample_button(ui) { self.load_sample(); }
-                if ui.add(ui::icon_button(icon::IMAGE, "Read image", true)).on_hover_text("Decode a QR code from a copied image or screenshot").clicked() {
+                if ui::clear_button(ui) { *self = Self::default(); }
+                ui.separator();
+                if ui.add(ui::icon_button(icon::IMAGE, "Read copied image", false)).on_hover_text("Decode a QR code from a copied image or screenshot").clicked() {
                     match arboard::Clipboard::new().and_then(|mut c| c.get_image()) {
                         Ok(img) => self.read(&Rgba { width: img.width, height: img.height, pixels: img.bytes.into_owned() }),
                         Err(e) => self.error = format!("No image in the clipboard ({e})"),
                     }
                 }
-                if ui::clear_button(ui) { *self = Self::default(); }
+                if ui::icon_only(ui, icon::FOLDER_OPEN, "Read a QR code from an image file") {
+                    if let Some(path) = ui::pick_files("Open an image with a QR code", &["png", "jpg", "jpeg", "webp", "bmp"]).first() { self.read_file(path); }
+                }
             });
             ui::fill_editor(left, "content", &mut self.text, "https://example.com");
             ui::toolbar(right, "QR code:", |ui| {
@@ -82,6 +86,7 @@ impl Tool for Qr {
             ui::preview_frame(right, |ui| {
                 if let Some(texture) = &self.texture {
                     let side = ui.available_width().min(ui.available_height()).min(420.0);
+                    ui::center_vertically(ui, side);
                     ui.vertical_centered(|ui| { ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(side, side))); });
                 }
             });

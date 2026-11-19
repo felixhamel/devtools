@@ -124,19 +124,24 @@ impl Tool for JsonFormat {
         ui::description(ui, "Validates JSON as you type, then formats or minifies it. Key order is kept unless you sort.");
         ui.add_space(10.0);
         ui::split(ui, |left, right| {
-            let mut run_now = self.io.input_pane(left, &["Format", "Minify"], "Paste JSON here…", Some(SAMPLE));
+            let (indent, sort_keys) = (&mut self.indent, &mut self.sort_keys);
+            let run_now = self.io.input_pane_with(left, &["Format", "Minify"], "Paste JSON here…", Some(SAMPLE), |ui| {
+                let mut changed = false;
+                ui.menu_button(format!("{}  Options", icon::SLIDERS_HORIZONTAL), |ui| {
+                    ui.label(egui::RichText::new("Indentation").small().color(theme::SUBTLE));
+                    for choice in Indent::ALL { changed |= ui.radio_value(indent, choice, choice.label()).changed(); }
+                    ui.separator();
+                    changed |= ui.checkbox(sort_keys, "Sort keys").changed();
+                }).response.on_hover_text(format!("{} · {}", indent.label(), if *sort_keys { "keys sorted" } else { "key order kept" }));
+                changed
+            });
             // The options live in the output toolbar: under the input, the editor takes all the space.
             let reuse = ui::toolbar(right, "Output:", |ui| {
                 ui::copy_button(ui, &self.io.output);
                 let reuse = super::reuse_menu(ui, &self.io.output, "JSON Format/Validate");
                 ui.separator();
-                egui::ComboBox::from_id_salt("json-indent").width(80.0).selected_text(self.indent.label()).show_ui(ui, |ui| {
-                    for indent in Indent::ALL { run_now |= ui.selectable_value(&mut self.indent, indent, indent.label()).changed(); }
-                });
-                run_now |= ui.checkbox(&mut self.sort_keys, "Sort keys").changed();
-                ui.separator();
-                ui.selectable_value(&mut self.view, View::Text, format!("{}  Text", icon::TEXT_ALIGN_LEFT));
-                ui.selectable_value(&mut self.view, View::Tree, format!("{}  Tree", icon::TREE_STRUCTURE));
+                let (text, tree) = (format!("{}  Text", icon::TEXT_ALIGN_LEFT), format!("{}  Tree", icon::TREE_STRUCTURE));
+                ui::segmented(ui, &mut self.view, &[(View::Text, text.as_str()), (View::Tree, tree.as_str())]);
                 reuse
             });
             if run_now { self.run(); }

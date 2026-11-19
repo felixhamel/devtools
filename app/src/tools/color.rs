@@ -3,7 +3,7 @@
 use csscolorparser::Color;
 use eframe::egui;
 use super::{Category, Tool};
-use crate::ui::{self, icon, theme, Highlight};
+use crate::ui::{self, icon, theme};
 
 const SAMPLE: &str = "#56D28F";
 
@@ -123,7 +123,7 @@ impl Tool for ColorTool {
             });
             if reuse { self.input = self.color.as_ref().map(hex).unwrap_or_default(); self.update(); }
             ui::error_label(right, &self.error);
-            ui::code_editor(right, "formats", &mut self.output, "", Highlight::KeyValue);
+            ui::properties(right, "formats", &self.output);
         });
     }
 

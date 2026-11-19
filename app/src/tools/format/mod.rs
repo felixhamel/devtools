@@ -11,7 +11,8 @@ mod css;
 mod html;
 
 pub fn html() -> Box<dyn Tool> {
-    Box::new(TextTool::new("HTML Beautify/Minify", icon::FILE_HTML, Category::Code, vec![("Beautify", html::beautify), ("Minify", html::minify)]).sample(r#"<!DOCTYPE html><html><head><title>Hello</title><style>body{font-family:system-ui}</style></head><body><nav><a href="/">Home</a><a href="/about">About</a></nav><main><h1>Hello, world</h1><p>Some <b>bold</b> text.</p></main></body></html>"#).syntax("html"))
+    Box::new(TextTool::new("HTML Beautify/Minify", icon::FILE_HTML, Category::Code, vec![("Beautify", html::beautify), ("Minify", html::minify)])
+        .describe("Indents HTML one element per line (inline <style> and <script> included), or minifies it.").sample(r#"<!DOCTYPE html><html><head><title>Hello</title><style>body{font-family:system-ui}</style></head><body><nav><a href="/">Home</a><a href="/about">About</a></nav><main><h1>Hello, world</h1><p>Some <b>bold</b> text.</p></main></body></html>"#).syntax("html"))
 }
 
 pub fn css() -> Box<dyn Tool> {
@@ -31,11 +32,13 @@ export const users=['Ada','Grace'].map(greet);console.log(users)"#).syntax("js")
 }
 
 pub fn xml() -> Box<dyn Tool> {
-    Box::new(TextTool::new("XML Beautify/Minify", icon::FILE_CODE, Category::Code, vec![("Beautify", |s| xml_rewrite(s, true)), ("Minify", |s| xml_rewrite(s, false))]).sample(r#"<?xml version="1.0"?><note id="42"><to>Ada</to><from>Grace</from><body>Hello <b>there</b></body><tags/></note>"#).syntax("xml"))
+    Box::new(TextTool::new("XML Beautify/Minify", icon::FILE_CODE, Category::Code, vec![("Beautify", |s| xml_rewrite(s, true)), ("Minify", |s| xml_rewrite(s, false))])
+        .describe("Indents XML (well-formedness is checked, comments and CDATA are kept), or minifies it.").sample(r#"<?xml version="1.0"?><note id="42"><to>Ada</to><from>Grace</from><body>Hello <b>there</b></body><tags/></note>"#).syntax("xml"))
 }
 
 pub fn sql() -> Box<dyn Tool> {
-    Box::new(TextTool::new("SQL Formatter", icon::DATABASE, Category::Code, vec![("Format", sql_format)]).sample(r#"select u.id, u.name, count(o.id) as orders from users u left join orders o on o.user_id = u.id where u.active = true group by u.id, u.name order by orders desc limit 10"#).syntax("sql"))
+    Box::new(TextTool::new("SQL Formatter", icon::DATABASE, Category::Code, vec![("Format", sql_format)])
+        .describe("Formats SQL with one clause per line and uppercase keywords. Most dialects are understood.").sample(r#"select u.id, u.name, count(o.id) as orders from users u left join orders o on o.user_id = u.id where u.active = true group by u.id, u.name order by orders desc limit 10"#).syntax("sql"))
 }
 
 fn sql_format(src: &str) -> Result<String, String> {

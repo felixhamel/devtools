@@ -60,11 +60,12 @@ pub mod theme {
     pub const ROSE: Color32 = Color32::from_rgb(255, 135, 125);
     pub const PINK: Color32 = Color32::from_rgb(255, 120, 190);
     pub const CYAN: Color32 = Color32::from_rgb(110, 210, 230);
+    pub const LIME: Color32 = Color32::from_rgb(185, 225, 110);
 }
 
 pub use theme::MUTED;
 
-/// Pseudo-language for [`Highlight::syntax`]: "Key: value" reports.
+/// Output "language" of `Key: value` reports, shown with [`properties`].
 pub const KEY_VALUE: &str = "key-value";
 
 /// Texts longer than this are shown without syntax highlighting, which would
@@ -115,6 +116,8 @@ pub fn apply_visuals(ctx: &egui::Context) {
     // Mint accent for selected tabs, checked boxes and selected text.
     visuals.selection.bg_fill = theme::ACCENT_DARK;
     visuals.selection.stroke.color = theme::TEXT_STRONG;
+    // Single-line fields share the editors' background instead of black.
+    visuals.extreme_bg_color = theme::EDITOR_BG;
     ctx.set_visuals(visuals);
 }
 
@@ -188,25 +191,34 @@ pub fn paste_button(ui: &mut egui::Ui, target: &mut String, error: &mut String) 
 
 /// "Copy" button that turns into "Copied" for a moment after a click.
 pub fn copy_button(ui: &mut egui::Ui, text: &str) {
-    copy_with_feedback(ui, text, ui.id().with("copy-feedback"), false);
+    copy_with_feedback(ui, text, ui.id().with("copy-feedback"), CopyStyle::Labeled);
 }
 
 /// Icon-only copy button (a check mark appears after a click). `id` must be
-/// unique among the buttons shown together, e.g. the row index in a grid.
+/// unique among the buttons shown together, e.g. the row index in a table.
 pub fn copy_icon(ui: &mut egui::Ui, text: &str, id: impl std::hash::Hash) {
-    copy_with_feedback(ui, text, egui::Id::new(("copy-icon", id)), true);
+    copy_with_feedback(ui, text, egui::Id::new(("copy-icon", id)), CopyStyle::Icon);
 }
 
-fn copy_with_feedback(ui: &mut egui::Ui, text: &str, id: egui::Id, compact: bool) {
+/// How a copy button looks: "Copy" with an icon, the icon alone, or a faint
+/// icon (in lists, until the row is hovered).
+#[derive(Clone, Copy, PartialEq)]
+enum CopyStyle { Labeled, Icon, Faint }
+
+fn copy_with_feedback(ui: &mut egui::Ui, text: &str, id: egui::Id, style: CopyStyle) {
     const FEEDBACK: f64 = 1.5;
     let now = ui.input(|i| i.time);
     // Seconds of "Copied" feedback left, if the button was clicked recently.
     let remaining = ui.data(|d| d.get_temp::<f64>(id)).map(|at| FEEDBACK - (now - at)).filter(|left| *left > 0.0);
     let (glyph, label) = if remaining.is_some() { (icon::CHECK, "Copied") } else { (icon::COPY, "Copy") };
-    let button = if compact {
-        egui::Button::new(egui::RichText::new(glyph).size(13.0).color(if remaining.is_some() { theme::ACCENT } else { theme::TEXT })).fill(theme::BUTTON).corner_radius(5)
-    } else {
-        icon_button(glyph, label, false)
+    let button = match style {
+        CopyStyle::Labeled => icon_button(glyph, label, false),
+        CopyStyle::Icon | CopyStyle::Faint => {
+            let faint = style == CopyStyle::Faint && remaining.is_none();
+            let color = if remaining.is_some() { theme::ACCENT } else if faint { theme::SUBTLE } else { theme::TEXT };
+            let fill = if faint { egui::Color32::TRANSPARENT } else { theme::BUTTON };
+            egui::Button::new(egui::RichText::new(glyph).size(13.0).color(color)).fill(fill).corner_radius(5)
+        }
     };
     if ui.add(button).on_hover_text("Copy to the clipboard").clicked() {
         ui.ctx().copy_text(text.to_owned());
@@ -245,20 +257,14 @@ pub enum Highlight<'a> {
     Syntax(&'a str),
     /// Byte ranges drawn on a green background (e.g. regex matches).
     Ranges(&'a [std::ops::Range<usize>]),
-    /// "Key: value" lines: keys muted, values bright.
-    KeyValue,
     /// Byte ranges drawn in the given text colors (e.g. the three parts of a JWT).
     Spans(&'a [(std::ops::Range<usize>, egui::Color32)]),
 }
 
 impl<'a> Highlight<'a> {
-    /// Highlighting for an optional language name; [`KEY_VALUE`] selects [`Highlight::KeyValue`].
+    /// Highlighting for an optional language name.
     pub fn syntax(language: Option<&'a str>) -> Self {
-        match language {
-            None => Highlight::Plain,
-            Some(KEY_VALUE) => Highlight::KeyValue,
-            Some(language) => Highlight::Syntax(language),
-        }
+        language.map_or(Highlight::Plain, Highlight::Syntax)
     }
 }
 
@@ -299,14 +305,6 @@ pub fn code_editor(ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str, h
                 Highlight::Spans(spans) => {
                     let mut layouter = |ui: &egui::Ui, string: &str, wrap_width: f32| {
                         let mut job = spans_job(ui, string, spans);
-                        job.wrap.max_width = wrap_width;
-                        ui.fonts(|fonts| fonts.layout_job(job))
-                    };
-                    ui.add(editor.layouter(&mut layouter))
-                }
-                Highlight::KeyValue => {
-                    let mut layouter = |ui: &egui::Ui, string: &str, wrap_width: f32| {
-                        let mut job = key_value_job(ui, string);
                         job.wrap.max_width = wrap_width;
                         ui.fonts(|fonts| fonts.layout_job(job))
                     };
@@ -383,34 +381,15 @@ fn spans_job(ui: &egui::Ui, text: &str, spans: &[(std::ops::Range<usize>, egui::
     job
 }
 
-/// Colors keys muted and values bright, line by line: `Key: value`,
-/// `key = value`, and `Heading:` lines whose value follows on the next lines.
-fn key_value_job(ui: &egui::Ui, text: &str) -> egui::text::LayoutJob {
-    let font = egui::TextStyle::Monospace.resolve(ui.style());
-    let key = egui::TextFormat::simple(font.clone(), MUTED);
-    let value = egui::TextFormat::simple(font, theme::TEXT_STRONG);
-    let mut job = egui::text::LayoutJob::default();
-    for line in text.split_inclusive('\n') {
-        let split = line.find(": ").map(|at| at + 1).or_else(|| line.find(" = ").map(|at| at + 2));
-        match split {
-            Some(at) => {
-                job.append(&line[..at], 0.0, key.clone());
-                job.append(&line[at..], 0.0, value.clone());
-            }
-            None if line.trim_end().ends_with(':') => job.append(line, 0.0, key.clone()),
-            None => job.append(line, 0.0, value.clone()),
-        }
-    }
-    job
-}
-
 fn plural(n: usize, word: &str) -> String { if n == 1 { word.to_owned() } else { format!("{word}s") } }
 
 /// A read-only area that fills the remaining space, for previews drawn with widgets.
 pub fn preview_frame(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     editor_frame().show(ui, |ui| {
         let size = ui.available_size();
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        // Side-by-side columns share their base id: salt with the frame's unique id
+        // so two previews never share a scroll position (or clash).
+        egui::ScrollArea::vertical().id_salt(ui.next_auto_id()).auto_shrink([false, false]).show(ui, |ui| {
             ui.set_min_size(size);
             add(ui);
         });
@@ -473,11 +452,17 @@ impl TextIo {
         self.error.clear();
     }
 
-    /// Draws the input pane (toolbar + editor). The action buttons act as a
-    /// mode switch: the selected one is highlighted and re-runs live as the
-    /// input changes. Returns true when the result should be recomputed now
+    /// Draws the input pane (toolbar + editor). With several actions, a
+    /// segmented control picks the mode, which re-runs live as the input
+    /// changes. Returns true when the result should be recomputed now
     /// (mode changed, sample loaded, or the input changed).
     pub fn input_pane(&mut self, ui: &mut egui::Ui, actions: &[&str], hint: &str, sample: Option<&str>) -> bool {
+        self.input_pane_with(ui, actions, hint, sample, |_| false)
+    }
+
+    /// Like [`TextIo::input_pane`], with `extra` controls at the end of the
+    /// toolbar (e.g. options of the mode); `extra` returns true to re-run.
+    pub fn input_pane_with(&mut self, ui: &mut egui::Ui, actions: &[&str], hint: &str, sample: Option<&str>, extra: impl FnOnce(&mut egui::Ui) -> bool) -> bool {
         let mut run_now = false;
         toolbar(ui, "Input:", |ui| {
             if paste_button(ui, &mut self.input, &mut self.error) { self.live.touch(ui.ctx()); }
@@ -489,13 +474,12 @@ impl TextIo {
                 }
             }
             if clear_button(ui) { self.clear(); }
-            ui.separator();
-            for (i, label) in actions.iter().enumerate() {
-                if ui.add(action_button(*label, i == self.active)).clicked() {
-                    self.active = i;
-                    run_now = true;
-                }
+            if actions.len() > 1 {
+                ui.separator();
+                let options: Vec<(usize, &str)> = actions.iter().copied().enumerate().collect();
+                run_now |= segmented(ui, &mut self.active, &options);
             }
+            run_now |= extra(ui);
         });
         if code_editor(ui, "input", &mut self.input, hint, Highlight::syntax(self.input_syntax)).changed() {
             self.live.touch(ui.ctx());
@@ -511,7 +495,11 @@ impl TextIo {
             extra(ui, &self.output)
         });
         error_label(ui, &self.error);
-        code_editor(ui, "output", &mut self.output, "", Highlight::syntax(self.output_syntax));
+        if self.output_syntax == Some(KEY_VALUE) {
+            properties(ui, "output", &self.output);
+        } else {
+            code_editor(ui, "output", &mut self.output, "", Highlight::syntax(self.output_syntax));
+        }
         result
     }
 }
@@ -519,15 +507,26 @@ impl TextIo {
 /// Joined toggle buttons of which exactly one is selected, e.g. view modes.
 /// Returns true when the user picked another option.
 pub fn segmented<T: PartialEq + Copy>(ui: &mut egui::Ui, current: &mut T, options: &[(T, &str)]) -> bool {
+    const SIZE: f32 = 12.5;
+    // A frame cannot wrap by itself: in a wrapping toolbar, start a new line when it does not fit.
+    if ui.layout().main_wrap {
+        let padding = 2.0 * ui.spacing().button_padding.x + 2.0;
+        let width: f32 = options.iter()
+            .map(|(_, label)| ui.fonts(|f| f.layout_no_wrap((*label).to_owned(), egui::FontId::proportional(SIZE), theme::TEXT).size().x) + padding)
+            .sum::<f32>() + 6.0;
+        if width > ui.available_size_before_wrap().x { ui.end_row(); }
+    }
     let mut changed = false;
     egui::Frame::new().fill(theme::SEARCH_BG).stroke(egui::Stroke::new(1.0_f32, theme::EDITOR_STROKE))
-        .corner_radius(6).inner_margin(2)
+        .corner_radius(6).inner_margin(1)
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
+            // As tall as the toolbar's other buttons.
+            ui.spacing_mut().button_padding.y = 1.0;
             ui.horizontal(|ui| {
                 for (value, label) in options {
                     let selected = *current == *value;
-                    let text = egui::RichText::new(*label).size(12.5).color(if selected { theme::ON_ACCENT } else { theme::TEXT });
+                    let text = egui::RichText::new(*label).size(SIZE).color(if selected { theme::ON_ACCENT } else { theme::TEXT });
                     let fill = if selected { theme::ACCENT_STRONG } else { egui::Color32::TRANSPARENT };
                     let button = egui::Button::new(text).fill(fill).stroke(egui::Stroke::NONE).corner_radius(4);
                     if ui.add(button).clicked() && !selected {
@@ -616,4 +615,157 @@ pub fn show_toast(ctx: &egui::Context) {
                 });
         });
     ctx.request_repaint();
+}
+
+/// A line of a `Key: value` report (see [`parse_properties`]).
+#[derive(Debug, PartialEq)]
+pub enum Property<'a> {
+    /// `Key: value`; `indent` marks lines that belong to the heading above.
+    Pair { key: &'a str, value: &'a str, indent: bool },
+    /// A line without a key, e.g. an item listed under a heading.
+    Text { value: &'a str, indent: bool },
+    /// A `Heading:` line followed by indented lines.
+    Heading(&'a str),
+    /// A blank line between groups.
+    Gap,
+}
+
+/// Splits a report into [`Property`] lines: `Key: value` (split at the first
+/// ": "), `Heading:` followed by indented lines (a single indented line
+/// becomes the heading's value), other lines, and blank lines.
+pub fn parse_properties(text: &str) -> Vec<Property<'_>> {
+    let lines: Vec<&str> = text.lines().collect();
+    let is_indented = |line: &str| line.starts_with(char::is_whitespace) && !line.trim().is_empty();
+    let mut items = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i].trim_end();
+        let indent = is_indented(line);
+        let trimmed = line.trim_start();
+        i += 1;
+        if trimmed.is_empty() {
+            items.push(Property::Gap);
+        } else if let Some((key, value)) = trimmed.split_once(": ") {
+            items.push(Property::Pair { key, value: value.trim(), indent });
+        } else if let (Some(key), false) = (trimmed.strip_suffix(':'), indent) {
+            let block = lines[i..].iter().take_while(|l| is_indented(l)).count();
+            if block == 1 {
+                items.push(Property::Pair { key, value: lines[i].trim(), indent: false });
+                i += 1;
+            } else {
+                items.push(Property::Heading(key));
+            }
+        } else {
+            items.push(Property::Text { value: trimmed, indent });
+        }
+    }
+    items
+}
+
+/// Shows a `Key: value` report as rows: muted keys, bright selectable values
+/// and a copy button for each value. `id` must be unique within the tool.
+pub fn properties(ui: &mut egui::Ui, id: &str, text: &str) {
+    property_list(ui, id, &parse_properties(text));
+}
+
+/// Draws [`Property`] rows in a scrolling frame, as [`properties`] does.
+pub fn property_list(ui: &mut egui::Ui, id: &str, items: &[Property]) {
+    const INDENT: f32 = 16.0;
+    const COPY_WIDTH: f32 = 32.0;
+    let key_font = egui::FontId::proportional(13.0);
+    let widest = items.iter()
+        .filter_map(|item| match item { Property::Pair { key, indent, .. } => Some((*key, *indent)), _ => None })
+        .map(|(key, indent)| ui.fonts(|f| f.layout_no_wrap(key.to_owned(), key_font.clone(), theme::MUTED).size().x) + if indent { INDENT } else { 0.0 })
+        .fold(0.0_f32, f32::max);
+    // The hovered row (from the previous frame) shows its copy button fully.
+    let hover_id = egui::Id::new((id, "hovered-row"));
+    let hovered: Option<usize> = ui.data(|d| d.get_temp(hover_id)).unwrap_or(None);
+    let mut now_hovered = None;
+    preview_frame(ui, |ui| {
+        let key_width = (widest + 14.0).min(ui.available_width() * 0.42);
+        for (n, item) in items.iter().enumerate() {
+            let (key, value, indent) = match *item {
+                Property::Gap => { ui.add_space(8.0); continue; }
+                Property::Heading(text) => {
+                    ui.add_space(2.0);
+                    ui.label(egui::RichText::new(text).color(theme::MUTED));
+                    continue;
+                }
+                Property::Pair { key, value, indent } => (Some(key), value, indent),
+                Property::Text { value, indent } => (None, value, indent),
+            };
+            let background = ui.painter().add(egui::Shape::Noop);
+            let row = ui.horizontal_top(|ui| {
+                if indent { ui.add_space(INDENT); }
+                if let Some(key) = key {
+                    let width = (key_width - if indent { INDENT } else { 0.0 }).max(20.0);
+                    ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                        ui.set_width(width);
+                        ui.add(egui::Label::new(egui::RichText::new(key).font(key_font.clone()).color(theme::MUTED)).truncate());
+                    });
+                }
+                let width = (ui.available_width() - COPY_WIDTH).max(40.0);
+                ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(width);
+                    ui.add(egui::Label::new(egui::RichText::new(value).monospace().color(theme::TEXT_STRONG)).wrap());
+                });
+                let style = if hovered == Some(n) { CopyStyle::Icon } else { CopyStyle::Faint };
+                copy_with_feedback(ui, value, egui::Id::new((id, "copy", n)), style);
+            });
+            let rect = row.response.rect.expand2(egui::vec2(6.0, 2.0));
+            if ui.rect_contains_pointer(rect) {
+                now_hovered = Some(n);
+                ui.painter().set(background, egui::epaint::RectShape::filled(rect, 5.0, theme::ROW_HOVER));
+            }
+        }
+    });
+    if now_hovered != hovered {
+        ui.data_mut(|d| d.insert_temp(hover_id, now_hovered));
+        ui.ctx().request_repaint();
+    }
+}
+
+/// A byte count for people: "512 B", "2.4 KB", "3.1 MB".
+pub fn human_size(bytes: usize) -> String {
+    match bytes {
+        b if b < 1024 => format!("{b} B"),
+        b if b < 1024 * 1024 => format!("{:.1} KB", b as f64 / 1024.0),
+        b => format!("{:.1} MB", b as f64 / (1024.0 * 1024.0)),
+    }
+}
+
+/// Space that centers content of `height` vertically in what is left of `ui`.
+pub fn center_vertically(ui: &mut egui::Ui, height: f32) {
+    ui.add_space(((ui.available_height() - height) / 2.0).max(0.0));
+}
+
+/// A centered icon and hint in an empty preview, e.g. before an image is loaded.
+pub fn empty_state(ui: &mut egui::Ui, glyph: &str, text: &str) {
+    ui.add_space((ui.available_height() / 2.0 - 40.0).max(8.0));
+    ui.vertical_centered(|ui| {
+        ui.label(egui::RichText::new(glyph).size(34.0).color(theme::SUBTLE));
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new(text).color(theme::SUBTLE));
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_key_value_reports() {
+        let report = "Read as: seconds\nUTC: Tue 14 Nov 2023, 22:13:20\n\nNext runs:\n  Mon 09:00\n  Tue 09:00\nSerial:\n  2D:F4\n2 matches\n  Group 1 (user): \"ada\"";
+        assert_eq!(parse_properties(report), [
+            Property::Pair { key: "Read as", value: "seconds", indent: false },
+            Property::Pair { key: "UTC", value: "Tue 14 Nov 2023, 22:13:20", indent: false },
+            Property::Gap,
+            Property::Heading("Next runs"),
+            Property::Text { value: "Mon 09:00", indent: true },
+            Property::Text { value: "Tue 09:00", indent: true },
+            Property::Pair { key: "Serial", value: "2D:F4", indent: false },
+            Property::Text { value: "2 matches", indent: false },
+            Property::Pair { key: "Group 1 (user)", value: "\"ada\"", indent: true },
+        ]);
+    }
 }

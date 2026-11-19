@@ -4,7 +4,7 @@ use chrono::{DateTime, Datelike, FixedOffset, Local, NaiveDate, NaiveDateTime, N
 use chrono_tz::Tz;
 use eframe::egui;
 use super::{Category, Tool};
-use crate::ui::{self, icon, theme, Highlight};
+use crate::ui::{self, icon, theme};
 
 const SAMPLE: &str = "1700000000";
 
@@ -288,7 +288,7 @@ impl Tool for UnixTime {
             });
             if reuse { self.input = self.output.lines().find_map(|l| l.strip_prefix("Unix seconds: ")).unwrap_or_default().to_owned(); self.update(true); }
             ui::error_label(right, &self.error);
-            ui::code_editor(right, "result", &mut self.output, "", Highlight::KeyValue);
+            ui::properties(right, "result", &self.output);
         });
     }
 

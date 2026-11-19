@@ -115,10 +115,8 @@ impl Password {
 
     fn options_ui(&mut self, ui: &mut egui::Ui) {
         let o = &mut self.options;
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut o.mode, Mode::Password, format!("{}  Password", icon::PASSWORD));
-            ui.selectable_value(&mut o.mode, Mode::Passphrase, format!("{}  Passphrase", icon::TEXT_AA));
-        });
+        let (password, passphrase) = (format!("{}  Password", icon::PASSWORD), format!("{}  Passphrase", icon::TEXT_AA));
+        ui::segmented(ui, &mut o.mode, &[(Mode::Password, password.as_str()), (Mode::Passphrase, passphrase.as_str())]);
         ui.add_space(10.0);
         egui::Grid::new("password-options").num_columns(2).spacing([12.0, 10.0]).show(ui, |ui| {
             match o.mode {

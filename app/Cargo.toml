@@ -5,7 +5,7 @@ version = "0.3.0"
 edition = "2021"
 
 [dependencies]
-eframe = "0.31"
+eframe = { version = "0.31", features = ["persistence"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["bmp", "jpeg", "png", "webp"] }
@@ -29,17 +29,18 @@ similar = "3.2.1"
 html-escape = "0.3.1"
 getrandom = "0.3"
 egui-phosphor = "0.9"
-egui_extras = { version = "0.31", default-features = false, features = ["datepicker", "syntect"] }
+egui_extras = { version = "0.31", default-features = false, features = ["datepicker", "syntect", "serde"] }
 chrono-tz = "0.10"
 csscolorparser = "0.9"
 hmac = "0.13"
 bip39 = { version = "3", default-features = false, features = ["std"] }
-serde = "1"
+serde = { version = "1", features = ["derive"] }
 unicode-segmentation = "1"
 unicode-normalization = "0.1"
 percent-encoding = "2"
 unicode_names2 = "4"
 rfd = { version = "0.18", default-features = false }
+ipnet = "2"
 
 [profile.release]
 # Smallest binary (~24 MB instead of ~35 MB) at the cost of a slower release
