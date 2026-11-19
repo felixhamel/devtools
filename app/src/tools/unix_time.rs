@@ -13,13 +13,13 @@ const SAMPLE: &str = "1700000000";
 pub(super) const DATE_TIME_FORMAT: &str = "%a %-d %b %Y, %H:%M:%S";
 
 /// Shown when a wall-clock time falls in a daylight-saving gap.
-const DST_GAP: &str = "That time does not exist in this zone (daylight-saving gap)";
+pub(super) const DST_GAP: &str = "That time does not exist in this zone (daylight-saving gap)";
 
 /// Every timestamp is converted through nanoseconds, whatever its unit.
 const NANOS_PER_SECOND: i128 = 1_000_000_000;
 
-/// Time zones offered before searching the full IANA list.
-const COMMON_ZONES: [Tz; 16] = [
+/// Time zones offered before searching the full IANA list (also listed by the Date Calculator).
+pub(super) const COMMON_ZONES: [Tz; 16] = [
     Tz::America__Toronto, Tz::America__New_York, Tz::America__Chicago, Tz::America__Denver, Tz::America__Los_Angeles,
     Tz::America__Sao_Paulo, Tz::Europe__London, Tz::Europe__Paris, Tz::Europe__Berlin, Tz::Africa__Johannesburg,
     Tz::Asia__Dubai, Tz::Asia__Kolkata, Tz::Asia__Singapore, Tz::Asia__Tokyo, Tz::Australia__Sydney, Tz::Pacific__Auckland,
@@ -27,7 +27,7 @@ const COMMON_ZONES: [Tz; 16] = [
 
 /// The time zone dates are shown in, and wall-clock input is read in.
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum Zone {
+pub(super) enum Zone {
     /// The system's zone.
     Local,
     Utc,
@@ -37,12 +37,12 @@ enum Zone {
 
 impl Zone {
     /// Name for the zone menu and the report (`America/New York`: underscores become spaces).
-    fn label(self) -> String {
+    pub(super) fn label(self) -> String {
         match self { Zone::Local => "Local time".into(), Zone::Utc => "UTC".into(), Zone::Named(tz) => tz.name().replace('_', " ") }
     }
 
     /// `instant` as seen in this zone, plus the zone's abbreviation (e.g. "EST").
-    fn view(self, instant: DateTime<Utc>) -> (DateTime<FixedOffset>, String) {
+    pub(super) fn view(self, instant: DateTime<Utc>) -> (DateTime<FixedOffset>, String) {
         match self {
             Zone::Local => { let t = instant.with_timezone(&Local); (t.fixed_offset(), t.format("%:z").to_string()) }
             Zone::Utc => (instant.fixed_offset(), "UTC".into()),
@@ -51,7 +51,7 @@ impl Zone {
     }
 
     /// The instant at a wall-clock time in this zone (`None` in a daylight-saving gap).
-    fn instant(self, naive: NaiveDateTime) -> Option<DateTime<Utc>> {
+    pub(super) fn instant(self, naive: NaiveDateTime) -> Option<DateTime<Utc>> {
         match self {
             Zone::Local => Local.from_local_datetime(&naive).earliest().map(|t| t.with_timezone(&Utc)),
             Zone::Utc => Some(Utc.from_utc_datetime(&naive)),
@@ -118,6 +118,11 @@ fn parse_input(text: &str, unit: Unit, zone: Zone) -> Result<(DateTime<Utc>, Opt
         return zone.instant(date.and_time(NaiveTime::MIN)).map(|d| (d, None)).ok_or_else(|| DST_GAP.into());
     }
     Err("Enter a Unix timestamp (s, ms, µs or ns), a date like 2024-05-17 14:30 or 2024-05-17T14:30:00Z, or \"now\"".into())
+}
+
+/// Like [`parse_input`] with the unit detected, for tools that only need the instant.
+pub(super) fn parse_instant(text: &str, zone: Zone) -> Result<DateTime<Utc>, String> {
+    parse_input(text, Unit::Auto, zone).map(|(instant, _)| instant)
 }
 
 /// The instant `nanos` nanoseconds after the epoch (before it if negative),
@@ -234,29 +239,30 @@ impl UnixTime {
             None => self.error = DST_GAP.into(),
         }
     }
+}
 
-    /// The time-zone menu: local time, UTC and common zones; typing searches all
-    /// IANA zones. Returns true when another zone was picked.
-    fn zone_picker(&mut self, ui: &mut egui::Ui) -> bool {
-        let before = self.zone;
-        egui::ComboBox::from_id_salt("unix-zone").width(210.0).height(320.0).selected_text(self.zone.label()).show_ui(ui, |ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.zone_filter).hint_text(format!("{}  Search all zones…", icon::MAGNIFYING_GLASS)));
+/// The time-zone menu: local time, UTC and common zones; typing in `filter`
+/// searches all IANA zones. `id` must be unique within the tool. Returns true
+/// when another zone was picked.
+pub(super) fn zone_picker(ui: &mut egui::Ui, id: &str, zone: &mut Zone, filter: &mut String) -> bool {
+    let before = *zone;
+    egui::ComboBox::from_id_salt(id).width(210.0).height(320.0).selected_text(zone.label()).show_ui(ui, |ui| {
+        ui.add(egui::TextEdit::singleline(filter).hint_text(format!("{}  Search all zones…", icon::MAGNIFYING_GLASS)));
+        ui.separator();
+        // IANA names use `_` where labels show a space ("New York").
+        let query = filter.to_lowercase().replace(' ', "_");
+        if query.is_empty() {
+            ui.selectable_value(zone, Zone::Local, Zone::Local.label());
+            ui.selectable_value(zone, Zone::Utc, "UTC");
             ui.separator();
-            // IANA names use `_` where labels show a space ("New York").
-            let query = self.zone_filter.to_lowercase().replace(' ', "_");
-            if query.is_empty() {
-                ui.selectable_value(&mut self.zone, Zone::Local, Zone::Local.label());
-                ui.selectable_value(&mut self.zone, Zone::Utc, "UTC");
-                ui.separator();
-                for tz in COMMON_ZONES { ui.selectable_value(&mut self.zone, Zone::Named(tz), Zone::Named(tz).label()); }
-            } else {
-                for tz in chrono_tz::TZ_VARIANTS.iter().filter(|tz| tz.name().to_lowercase().contains(&query)) {
-                    ui.selectable_value(&mut self.zone, Zone::Named(*tz), Zone::Named(*tz).label());
-                }
+            for tz in COMMON_ZONES { ui.selectable_value(zone, Zone::Named(tz), Zone::Named(tz).label()); }
+        } else {
+            for tz in chrono_tz::TZ_VARIANTS.iter().filter(|tz| tz.name().to_lowercase().contains(&query)) {
+                ui.selectable_value(zone, Zone::Named(*tz), Zone::Named(*tz).label());
             }
-        });
-        self.zone != before
-    }
+        }
+    });
+    *zone != before
 }
 
 impl Tool for UnixTime {
@@ -299,7 +305,7 @@ impl Tool for UnixTime {
                 ui.end_row();
 
                 ui.label(egui::RichText::new("Time zone").color(theme::MUTED));
-                options_changed |= self.zone_picker(ui);
+                options_changed |= zone_picker(ui, "unix-zone", &mut self.zone, &mut self.zone_filter);
                 ui.end_row();
 
                 ui.label(egui::RichText::new("Date").color(theme::MUTED));

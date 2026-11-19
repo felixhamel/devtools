@@ -17,6 +17,8 @@ fn re(pattern: &str) -> Regex { Regex::new(pattern).expect("detection patterns a
 
 /// Three dot-separated parts in URL-safe Base64; the header is JSON, so it starts with `eyJ` (`{"`).
 static JWT: LazyLock<Regex> = LazyLock::new(|| re(r"^eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$"));
+/// An Amazon Resource Name: `arn:partition:service:`…
+static ARN: LazyLock<Regex> = LazyLock::new(|| re(r"^arn:aws[a-z-]*:[a-z0-9-]+:"));
 /// With or without hyphens, optionally in braces or as a `urn:uuid:` URN.
 static UUID: LazyLock<Regex> = LazyLock::new(|| re(r"(?i)^(urn:uuid:)?\{?[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}\}?$"));
 /// 26 Crockford Base32 characters; the first is at most 7 so the timestamp fits in 48 bits.
@@ -52,6 +54,7 @@ pub fn detect(text: &str) -> Option<Detected> {
     // From the most to the least specific format: the order matters, since a text
     // can match several patterns (e.g. a UUID without hyphens is also hex).
     if JWT.is_match(t) { return found("JWT Debugger", "a JWT"); }
+    if ARN.is_match(t) { return found("AWS ARN Parser", "an ARN"); }
     if t.contains("-----BEGIN CERTIFICATE-----") { return found("Certificate Decoder (X.509)", "a certificate"); }
     if t.starts_with("data:image/") { return found("Base64 Image Encode/Decode", "an image data URI"); }
     if (t.starts_with('{') || t.starts_with('[')) && serde_json::from_str::<serde_json::Value>(t).is_ok() { return found("JSON Format/Validate", "JSON"); }
@@ -75,6 +78,7 @@ pub fn detect(text: &str) -> Option<Detected> {
     if t.starts_with('<') && t.ends_with('>') { return found("HTML Beautify/Minify", "HTML"); }
     let first = fields.first().map(|w| w.to_ascii_uppercase()).unwrap_or_default();
     if SQL_KEYWORDS.contains(&first.as_str()) && fields.len() > 1 { return found("SQL Formatter", "SQL"); }
+    if is_csv(t) { return found("JSON \u{2194} CSV", "CSV"); }
     if one_word && PERCENT.is_match(t) { return found("URL Encode/Decode", "URL-encoded text"); }
     if ENTITY.is_match(t) { return found("HTML Entity Encode/Decode", "HTML entities"); }
     // Hex needs both a digit and a letter, so plain numbers and words are left alone.
@@ -82,6 +86,18 @@ pub fn detect(text: &str) -> Option<Detected> {
     if BASE64.is_match(t) && t.len().is_multiple_of(4) && decodes_to_text(t) { return found("Base64 String Encode/Decode", "Base64"); }
     if IDENTIFIER.is_match(t) { return found("String Case Converter", "an identifier"); }
     None
+}
+
+/// Whether `text` looks like a table: at least 3 lines that all have the same
+/// number of fields (2 or more), split by the comma, semicolon or tab that the
+/// first line uses most.
+fn is_csv(text: &str) -> bool {
+    if text.lines().filter(|l| !l.trim().is_empty()).count() < 3 { return false; }
+    let Some(delimiter) = super::json_csv::guess_delimiter(text) else { return false };
+    let mut reader = csv::ReaderBuilder::new().delimiter(delimiter).has_headers(false).from_reader(text.as_bytes());
+    // Without `flexible`, the reader fails on a record of another length.
+    let mut fields = 0;
+    reader.records().all(|record| record.is_ok_and(|r| { fields = r.len(); r.len() >= 2 })) && fields >= 2
 }
 
 /// Whether `text` is Base64 for readable UTF-8 (so plain words are not mistaken for it).
@@ -124,6 +140,9 @@ mod tests {
             ("48 65 6c 6c 6f", "Hex \u{2194} ASCII"),
             ("SGVsbG8sIHdvcmxkIQ==", "Base64 String Encode/Decode"),
             ("parseHttpResponse", "String Case Converter"),
+            ("arn:aws:iam::123456789012:role/deploy", "AWS ARN Parser"),
+            ("id,name\n1,Ada\n2,Grace", "JSON \u{2194} CSV"),
+            ("id;name;city\n1;Ada;London\n2;Grace;\"New York\"", "JSON \u{2194} CSV"),
             ("user_id", "String Case Converter"),
         ];
         for (text, expected) in cases {
@@ -133,7 +152,8 @@ mod tests {
 
     #[test]
     fn leaves_plain_text_alone() {
-        for text in ["", "   ", "hello world", "Hello", "abcdefgh", "12", "just a sentence, nothing more."] {
+        for text in ["", "   ", "hello world", "Hello", "abcdefgh", "12", "just a sentence, nothing more.",
+            "Dear Ada,\nthanks for the notes.\nBest, Grace", "a,b\nc,d"] {
             assert_eq!(tool(text), None, "{text:?}");
         }
     }
@@ -143,7 +163,7 @@ mod tests {
         let tools = super::super::registry();
         let samples = ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln", "-----BEGIN CERTIFICATE-----", "data:image/png;base64,AA==", "{}",
             "https://a.io", "3f2504e0-4f89-11d3-9a0c-0305e82c3301", "10.0.0.0/16", "1700000000", "#fff", "0 * * * *", "<?xml?>", "<b>x</b>",
-            "SELECT 1", "a%20b", "&amp;", "48656c6c6f", "SGVsbG8sIHdvcmxkIQ==", "fooBar"];
+            "SELECT 1", "a%20b", "&amp;", "48656c6c6f", "SGVsbG8sIHdvcmxkIQ==", "fooBar", "arn:aws:s3:::bucket", "a,b\n1,2\n3,4"];
         for text in samples {
             let detected = detect(text).unwrap_or_else(|| panic!("{text} not recognized"));
             let tool = tools.iter().find(|t| t.name() == detected.tool).unwrap_or_else(|| panic!("no tool named {}", detected.tool));

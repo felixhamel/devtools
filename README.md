@@ -5,7 +5,7 @@
 <h1 align="center">DevUtils</h1>
 
 <p align="center">
-  30 everyday developer tools in one fast, native macOS window.<br>
+  35 everyday developer tools in one fast, native macOS window.<br>
   Built in Rust with <a href="https://github.com/emilk/egui">egui</a>. Everything runs offline.
 </p>
 
@@ -17,11 +17,11 @@
   <img src="docs/screenshots/home.png" alt="The DevUtils home screen: a paste-anything card and every tool as a card, grouped by category" width="860">
 </p>
 
-DevUtils gathers the small tools developers reach for every day — formatting JSON, decoding a JWT, testing a regex, converting a timestamp, comparing two files, planning a VPC's subnets — in one window. Nothing you paste ever leaves your machine.
+DevUtils gathers the small tools developers reach for every day — formatting JSON, decoding a JWT, testing a regex, converting a timestamp, comparing two files, planning a VPC's subnets, previewing Markdown — in one window. Nothing you paste ever leaves your machine.
 
 ## Highlights
 
-- **Paste anything.** Press ⌘V on the home screen: DevUtils recognizes JWTs, JSON, timestamps and dates, UUIDs and ULIDs, IP addresses and CIDR blocks, URLs, colors, cron expressions, certificates, Base64 and more, and opens the right tool with it. Drop files the same way: two images open in Image Compare, two texts in Code Compare.
+- **Paste anything.** Press ⌘V on the home screen: DevUtils recognizes JWTs, JSON, CSV, timestamps and dates, UUIDs and ULIDs, IP addresses and CIDR blocks, AWS ARNs, URLs, colors, cron expressions, certificates, Base64 and more, and opens the right tool with it. Drop files the same way: two images open in Image Compare, two texts in Code Compare.
 - **Live results.** Tools update as you type, with syntax highlighting (JSON, SQL, JS, HTML, CSS, XML…). Results shown as a list — hashes, color formats, dates, certificate fields — have a copy button on each value.
 - **Chain tools.** The **⇄ Reuse** menu sends a result back as input, or to another tool: decode Base64, then send the JSON to the formatter.
 - **Find a tool fast.** ⌘K opens a palette with fuzzy search. Star the tools you use most with ⌘D: they come first in the sidebar, on the home screen and in the palette.
@@ -52,12 +52,14 @@ DevUtils gathers the small tools developers reach for every day — formatting J
 |---|---|
 | **Unix Time Converter** | Timestamps in seconds, ms, µs or ns (detected automatically), ISO 8601 or RFC 2822 dates; calendar and clock fields, any IANA time zone, relative time ("3 days ago") |
 | **Cron Job Parser** | A plain-English description of a cron expression (5 fields, or 6 with seconds) and its next runs |
+| **Date Calculator** | The time between two dates (calendar breakdown, days, weeks, business days, hours…), a date plus or minus a duration (optionally in business days), or one moment in your time zone, UTC and common zones |
 
 ### Data conversion
 
 | Tool | What it does |
 |---|---|
 | **JSON Format/Validate** | Validates as you type; formats (2 or 4 spaces, tabs) or minifies, sorts keys, shows a collapsible tree; errors point at the line and column |
+| **JSON ↔ CSV** | An array of objects to CSV, nested objects as `address.city` columns, and CSV back to JSON with numbers and booleans detected; comma, semicolon or tab |
 | **URL Parser** | Splits a URL into scheme, credentials, host, port, path, query parameters and fragment; edit any part and the URL is rebuilt |
 
 ### Network
@@ -83,6 +85,7 @@ DevUtils gathers the small tools developers reach for every day — formatting J
 |---|---|
 | **JWT Debugger** | Colored header, payload and signature; `exp`, `nbf` and `iat` as dates with a validity badge; HS256, HS384 and HS512 signature verification |
 | **UUID/ULID Generate/Decode** | Generates UUID v4, UUID v7 or ULID, in bulk, uppercase or without hyphens; decodes identifiers, including the timestamp of v7 UUIDs and ULIDs |
+| **AWS ARN Parser** | Splits an ARN into partition, service, region, account and resource (S3 bucket and key too), with service and region names; finds every ARN in a pasted policy or log |
 | **Hash Generator** | MD5, SHA-1, SHA-256 and SHA-512 of the exact input |
 | **Password Generator** | Passwords or passphrases from the system's secure random generator: length, character sets, look-alike filter, strength meter, several at once |
 | **Certificate Decoder (X.509)** | PEM or Base64 DER certificates: subject, issuer, validity and status, alternative names, public key, signature algorithm, fingerprints |
@@ -97,6 +100,7 @@ DevUtils gathers the small tools developers reach for every day — formatting J
 | **String Case Converter** | camelCase, PascalCase, snake_case, CONSTANT_CASE, kebab-case, slug, dot.case, path/case, Title Case, Sentence case… each with its own copy button |
 | **Color Converter** | Any CSS color or name, or the color picker: HEX, RGB, HSL, HWB, OKLCH and WCAG contrast against black and white |
 | **Line Sort/Dedupe** | Sorts and removes duplicate lines, ignoring case or surrounding whitespace if you like |
+| **Lorem Ipsum Generator** | Placeholder paragraphs, sentences or words, starting with the classic "Lorem ipsum…" or not, optionally wrapped in `<p>` tags |
 
 ### Compare
 
@@ -115,6 +119,7 @@ DevUtils gathers the small tools developers reach for every day — formatting J
 | **JS Beautify/Minify** | Reprints JavaScript (JSX allowed); minifying also shortens names |
 | **XML Beautify/Minify** | Indents or minifies XML; well-formedness is checked, comments and CDATA are kept |
 | **SQL Formatter** | One clause per line with uppercase keywords |
+| **Markdown Editor** | A live preview (tables, task lists, footnotes, highlighted code) and the generated HTML; tick task-list boxes right in the preview |
 
 ### Keyboard shortcuts
 

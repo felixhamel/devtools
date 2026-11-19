@@ -41,6 +41,9 @@ percent-encoding = "2"
 unicode_names2 = "4"
 rfd = { version = "0.18", default-features = false }
 ipnet = "2"
+csv = "1"
+egui_commonmark = { version = "0.20", default-features = false, features = ["pulldown_cmark", "better_syntax_highlighting"] }
+pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
 
 [profile.release]
 # Smallest binary (~24 MB instead of ~35 MB) at the cost of a slower release

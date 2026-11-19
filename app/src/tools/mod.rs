@@ -9,6 +9,7 @@
 use eframe::egui;
 use crate::ui::{self, icon, TextIo};
 
+mod arn;
 mod base64_image;
 mod base64_string;
 mod case;
@@ -16,15 +17,19 @@ mod code;
 mod code_compare;
 mod color;
 mod cron;
+mod date_calc;
 pub mod detect;
 mod encoding;
 mod format;
 mod identifiers;
 mod image_compare;
 mod inspector;
+mod json_csv;
 mod json_format;
 mod jwt;
 mod lines;
+mod lorem;
+mod markdown;
 mod password;
 mod qr;
 mod regex_tester;
@@ -259,6 +264,7 @@ pub fn registry() -> Vec<Box<dyn Tool>> {
     vec![
         Box::new(unix_time::UnixTime::default()),
         Box::new(json_format::JsonFormat::default()),
+        Box::new(json_csv::JsonCsv::default()),
         Box::new(base64_string::Base64String::default()),
         Box::new(base64_image::Base64Image::default()),
         Box::new(jwt::Jwt::default()),
@@ -269,6 +275,7 @@ pub fn registry() -> Vec<Box<dyn Tool>> {
         encoding::html_entity(),
         encoding::backslash(),
         Box::new(identifiers::Identifiers::default()),
+        arn::arn(),
         Box::new(code_compare::CodeCompare::default()),
         Box::new(image_compare::ImageCompare::default()),
         code::number_base(),
@@ -282,10 +289,13 @@ pub fn registry() -> Vec<Box<dyn Tool>> {
         format::sql(),
         Box::new(case::CaseConverter::default()),
         cron::cron(),
+        Box::new(date_calc::DateCalculator::default()),
         Box::new(color::ColorTool::default()),
         Box::new(password::Password::default()),
         x509::certificate(),
         encoding::hex(),
         Box::new(lines::Lines::default()),
+        Box::new(lorem::Lorem::default()),
+        Box::new(markdown::Markdown::default()),
     ]
 }
