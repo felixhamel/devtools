@@ -48,6 +48,13 @@ impl Format {
     fn index(self) -> usize { self as usize }
 }
 
+/// The documents of a YAML stream, with YAML 1.2's booleans: only `true` and
+/// `false` (in any case) are booleans, so `yes`, `on` or the country code `NO`
+/// stay text instead of silently becoming `true` or `false`.
+pub(super) fn yaml_documents(text: &str) -> Result<Vec<Value>, serde_saphyr::Error> {
+    serde_saphyr::from_multiple_with_options(text, serde_saphyr::options! { strict_booleans: true })
+}
+
 /// Reads `text` as JSON if it is valid JSON, as TOML if it is valid TOML, and
 /// as YAML otherwise. A YAML stream of several documents becomes an array.
 fn read(text: &str) -> Result<(Format, Value), String> {
@@ -61,7 +68,7 @@ fn read(text: &str) -> Result<(Format, Value), String> {
     // Text that starts like JSON (and is not a TOML `[table]`) is meant as JSON:
     // YAML would accept some broken JSON, such as `{"a": }`, and hide the mistake.
     if text.trim_start().starts_with(['{', '[']) { return Err(format!("Invalid JSON: {json_error}")); }
-    match serde_saphyr::from_multiple::<Value>(text) {
+    match yaml_documents(text) {
         Ok(mut documents) if documents.len() == 1 => Ok((Format::Yaml, documents.remove(0))),
         Ok(documents) => Ok((Format::Yaml, Value::Array(documents))),
         // The first line says where and what ("line 2 column 4: …"); the snippet
@@ -236,6 +243,48 @@ mod tests {
         let toml = write(&value, Format::Toml).unwrap();
         assert!(toml.contains("name = \"api\"\nport = 8080\n") && toml.contains("[db]\nhost = \"localhost\""), "{toml}");
         assert_eq!(read(&toml).unwrap(), (Format::Toml, value));
+    }
+
+    #[test]
+    fn keeps_yaml_text_as_text() {
+        // YAML 1.2: only true and false are booleans ("NO" is Norway), and `on:` stays a key.
+        let (_, value) = read("on: push\ncountry: NO\nenabled: yes\nreal: True\nversion: \"1.10\"\nempty:\ntilde: ~").unwrap();
+        assert_eq!(value, json!({"on": "push", "country": "NO", "enabled": "yes", "real": true, "version": "1.10", "empty": null, "tilde": null}));
+        // An alias repeats the anchored value.
+        assert_eq!(read("a: &x [1, 2]\nb: *x").unwrap().1, json!({"a": [1, 2], "b": [1, 2]}));
+        // Strings that look like other types keep their quotes when written.
+        let quoted = json!({"s": "123", "t": "true", "n": "null", "e": "", "multi": "a\nb", "colon": "a: b"});
+        assert_eq!(read(&write(&quoted, Format::Yaml).unwrap()).unwrap().1, quoted);
+    }
+
+    #[test]
+    fn converts_between_toml_and_yaml() {
+        let toml = "title = \"Orders\"\n\n[database]\nports = [8000, 8001]\nenabled = true\n\n[[owners]]\nname = \"Ada\"\n\n[[owners]]\nname = \"Grace\"";
+        let (format, value) = read(toml).unwrap();
+        assert_eq!(format, Format::Toml);
+        assert_eq!(value["owners"][1], json!({"name": "Grace"}));
+        let yaml = write(&value, Format::Yaml).unwrap();
+        assert_eq!(read(&yaml).unwrap(), (Format::Yaml, value.clone()));
+        // Arrays of objects become [[tables]] again.
+        let back = write(&value, Format::Toml).unwrap();
+        assert!(back.contains("[[owners]]\nname = \"Ada\"\n\n[[owners]]\nname = \"Grace\""), "{back}");
+        // Floats JSON cannot hold become strings.
+        assert_eq!(read("x = nan\ny = inf").unwrap().1, json!({"x": "NaN", "y": "inf"}));
+    }
+
+    #[test]
+    fn picks_the_output_format_from_the_input() {
+        let mut tool = YamlToml::default();
+        tool.set_input("{\"name\": \"api\"}");
+        assert_eq!((tool.io.active, tool.io.output.as_str(), tool.source), (Format::Yaml.index(), "name: api", Some(Format::Json)));
+        tool.set_input("name: api");
+        assert_eq!((tool.io.active, tool.io.output.as_str(), tool.source), (Format::Json.index(), "{\n  \"name\": \"api\"\n}", Some(Format::Yaml)));
+        // An error clears the output but keeps the last format read (for the input's highlighting).
+        tool.set_input("{\"name\": }");
+        assert!(tool.io.error.starts_with("Invalid JSON") && tool.io.output.is_empty(), "{}", tool.io.error);
+        assert_eq!(tool.source, Some(Format::Yaml));
+        tool.set_input("  ");
+        assert!(tool.io.error.is_empty() && tool.io.output.is_empty() && tool.source.is_none());
     }
 
     #[test]

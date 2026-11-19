@@ -63,13 +63,19 @@ fn encoded_parts(input: &str) -> Result<Vec<String>, String> {
 fn gunzip_base64(data: &str) -> Result<String, String> {
     let compact: String = data.chars().filter(|c| !c.is_whitespace()).collect();
     let bytes = STANDARD.decode(&compact).or_else(|_| URL_SAFE.decode(&compact)).map_err(|_| "Not valid Base64".to_owned())?;
+    gunzip(&bytes, MAX_DECOMPRESSED)
+}
+
+/// The UTF-8 text compressed in `bytes` (gzip, possibly several members), if
+/// it is at most `limit` bytes once decompressed.
+fn gunzip(bytes: &[u8], limit: u64) -> Result<String, String> {
     if !bytes.starts_with(&[0x1f, 0x8b]) {
         return Err("Not gzip-compressed data (CloudWatch Logs data starts with H4sI): try the Base64 String tool".into());
     }
     let mut text = String::new();
-    flate2::read::MultiGzDecoder::new(bytes.as_slice()).take(MAX_DECOMPRESSED + 1).read_to_string(&mut text)
+    flate2::read::MultiGzDecoder::new(bytes).take(limit + 1).read_to_string(&mut text)
         .map_err(|e| format!("Cannot decompress: {e}"))?;
-    if text.len() as u64 > MAX_DECOMPRESSED { return Err("Larger than 64 MB once decompressed".into()); }
+    if text.len() as u64 > limit { return Err(format!("Larger than {} MB once decompressed", limit / (1024 * 1024))); }
     Ok(text)
 }
 
@@ -101,9 +107,9 @@ fn events_text(message: &Value) -> Option<String> {
     Some(lines.join("\n"))
 }
 
-/// Both views of the decoded `input`: (events, JSON). The events view falls
-/// back to the JSON view for payloads that are not CloudWatch Logs messages
-/// (such as the CONTROL_MESSAGE sent when a subscription is created).
+/// Both views of the decoded `input`: (events, JSON). The events view shows
+/// payloads without `logEvents` (data that is not from CloudWatch Logs) as in
+/// the JSON view.
 fn decode(input: &str) -> Result<(String, String), String> {
     let mut events = Vec::new();
     let mut payloads = Vec::new();
@@ -197,12 +203,15 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    /// `text` gzip-compressed and Base64-encoded, as CloudWatch Logs sends it.
-    fn pack(text: &str) -> String {
+    /// `bytes` gzip-compressed.
+    fn gzip(bytes: &[u8]) -> Vec<u8> {
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-        encoder.write_all(text.as_bytes()).unwrap();
-        STANDARD.encode(encoder.finish().unwrap())
+        encoder.write_all(bytes).unwrap();
+        encoder.finish().unwrap()
     }
+
+    /// `text` gzip-compressed and Base64-encoded, as CloudWatch Logs sends it.
+    fn pack(text: &str) -> String { STANDARD.encode(gzip(text.as_bytes())) }
 
     #[test]
     fn decodes_a_lambda_event() {
@@ -223,6 +232,31 @@ mod tests {
         let data = pack("plain text");
         let (events, json) = decode(&format!("{}\n{}", &data[..10], &data[10..])).unwrap();
         assert_eq!((events.as_str(), json.as_str()), ("plain text", "plain text"));
+    }
+
+    #[test]
+    fn decodes_every_event_shape() {
+        let message = r#"{"messageType":"DATA_MESSAGE","logGroup":"g","logStream":"s","owner":"1","logEvents":[]}"#;
+        // A Firehose transformation event.
+        let firehose = format!(r#"{{"invocationId": "x", "records": [{{"recordId": "1", "data": "{}"}}]}}"#, pack(message));
+        assert!(decode(&firehose).unwrap().0.ends_with("Account: 1\n0 events\n"), "{:?}", decode(&firehose));
+        // The data as a JSON string, or in the URL-safe alphabet.
+        assert_eq!(decode(&format!("\"{}\"", pack("hi"))).unwrap(), ("hi".to_owned(), "hi".to_owned()));
+        assert_eq!(decode(&URL_SAFE.encode(gzip(b"url-safe"))).unwrap().0, "url-safe");
+        // The message CloudWatch sends to check a new subscription has events too.
+        let control = r#"{"messageType":"CONTROL_MESSAGE","owner":"CloudwatchLogs","logGroup":"","logStream":"","subscriptionFilters":[],"logEvents":[{"id":"","timestamp":1795096401000,"message":"CWL CONTROL MESSAGE: Checking health of destination"}]}"#;
+        assert!(decode(&pack(control)).unwrap().0.ends_with("2026-11-19 13:53:21.000Z  CWL CONTROL MESSAGE: Checking health of destination"));
+    }
+
+    #[test]
+    fn decompresses_safely() {
+        // Several gzip members in a row are read as one text.
+        let two = [gzip(b"ab"), gzip(b"cd")].concat();
+        assert_eq!(gunzip(&two, 100).unwrap(), "abcd");
+        // Up to the limit, and not one byte more.
+        assert_eq!(gunzip(&gzip(b"abc"), 3).unwrap(), "abc");
+        assert!(gunzip(&gzip(&[b'a'; 1000]), 100).unwrap_err().starts_with("Larger than"));
+        assert!(gunzip(&gzip(&[0xff, 0xfe]), 100).unwrap_err().starts_with("Cannot decompress"));
     }
 
     #[test]

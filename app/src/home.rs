@@ -9,6 +9,23 @@ const CONTENT_MAX_WIDTH: f32 = 900.0;
 const CARD_MIN_WIDTH: f32 = 210.0;
 /// Space between tool cards, both ways.
 const CARD_GAP: f32 = 10.0;
+/// Dropped text files that open in a tool because of their extension, whatever
+/// their content (a Markdown file has no format to recognize). See [`tool_for_file`].
+const BY_EXTENSION: [(&str, &str); 7] = [
+    ("md", "Markdown Editor"), ("markdown", "Markdown Editor"),
+    ("csv", "JSON \u{2194} CSV"), ("tsv", "JSON \u{2194} CSV"),
+    ("yaml", "JSON \u{2194} YAML \u{2194} TOML"), ("yml", "JSON \u{2194} YAML \u{2194} TOML"), ("toml", "JSON \u{2194} YAML \u{2194} TOML"),
+];
+
+/// The tool a dropped file opens in because of its extension (in any case), if any.
+fn tool_for_file(name: &str) -> Option<&'static str> {
+    let extension = name.rsplit_once('.')?.1.to_lowercase();
+    BY_EXTENSION.iter().find(|(ext, _)| *ext == extension).map(|(_, tool)| *tool)
+}
+
+/// `text` without the byte-order mark some programs put first (Excel's CSV
+/// exports do): it would end up in the first column's name.
+fn without_bom(text: &str) -> &str { text.strip_prefix('\u{feff}').unwrap_or(text) }
 
 impl App {
     /// Opens `text` in the tool that recognizes it (a JWT in the JWT
@@ -45,12 +62,23 @@ impl App {
             (1, 1) => ("Base64 Image Encode/Decode", "Image encoded in Base64"),
             (_, n) if n >= 2 => ("Image Compare", "Images opened in Image Compare"),
             (1, _) => {
-                // A text file whose content is recognized opens like a paste; others go to Code Compare.
-                let text = ui::read_dropped(&files[0]).ok().and_then(|(_, bytes)| String::from_utf8(bytes).ok());
-                if let Some(text) = text.filter(|t| tools::detect::detect(t).is_some()) {
-                    ctx.input_mut(|i| i.raw.dropped_files.clear());
-                    self.open_text(ctx, &text);
-                    return;
+                // A text file opens in the tool for its extension, or like a paste
+                // when its content is recognized; others go to Code Compare.
+                if let Ok((name, bytes)) = ui::read_dropped(&files[0]) {
+                    if let Some(i) = tool_for_file(&name).and_then(|tool| self.tool_index(tool)) {
+                        // The tool is known: a file that is not quite UTF-8 still opens there.
+                        let text = String::from_utf8_lossy(&bytes);
+                        ctx.input_mut(|input| input.raw.dropped_files.clear());
+                        self.tools[i].set_input(without_bom(&text));
+                        self.open(ctx, Some(i));
+                        ui::toast(ctx, icon::DOWNLOAD_SIMPLE, format!("Opened {name} in {}", self.tools[i].name()));
+                        return;
+                    }
+                    if let Some(text) = String::from_utf8(bytes).ok().filter(|t| tools::detect::detect(without_bom(t)).is_some()) {
+                        ctx.input_mut(|input| input.raw.dropped_files.clear());
+                        self.open_text(ctx, without_bom(&text));
+                        return;
+                    }
                 }
                 ("Code Compare", "Opened in Code Compare — drop a second file to compare")
             }
@@ -203,4 +231,40 @@ fn tool_card(ui: &mut egui::Ui, tool: &dyn Tool, width: f32) -> egui::Response {
     let galley = painter.layout_job(name);
     painter.galley(card.left_center() + egui::vec2(50.0, -galley.size().y / 2.0), galley, theme::TEXT_STRONG);
     response.on_hover_text(tool.category().label()).on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn picks_a_tool_by_extension() {
+        assert_eq!(tool_for_file("notes.md"), Some("Markdown Editor"));
+        assert_eq!(tool_for_file("README.MARKDOWN"), Some("Markdown Editor"));
+        assert_eq!(tool_for_file("export.2026.csv"), Some("JSON \u{2194} CSV"));
+        assert_eq!(tool_for_file("data.TSV"), Some("JSON \u{2194} CSV"));
+        assert_eq!(tool_for_file("docker-compose.yml"), Some("JSON \u{2194} YAML \u{2194} TOML"));
+        assert_eq!(tool_for_file("Cargo.toml"), Some("JSON \u{2194} YAML \u{2194} TOML"));
+        // Other files are recognized by their content, or go to Code Compare.
+        for name in ["main.rs", "archive.tar.gz", "README", "csv", "notes.md.bak"] {
+            assert_eq!(tool_for_file(name), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn drops_the_byte_order_mark() {
+        assert_eq!(without_bom("\u{feff}id,name\n1,Ada"), "id,name\n1,Ada");
+        assert_eq!(without_bom("id,name"), "id,name");
+        // Only a leading mark is a byte-order mark.
+        assert_eq!(without_bom("a\u{feff}b"), "a\u{feff}b");
+    }
+
+    #[test]
+    fn extensions_open_tools_that_take_text() {
+        let tools = crate::tools::registry();
+        for (extension, name) in BY_EXTENSION {
+            let tool = tools.iter().find(|t| t.name() == name).unwrap_or_else(|| panic!(".{extension}: no tool named {name}"));
+            assert!(tool.accepts_input(), "{name} does not accept input");
+        }
+    }
 }

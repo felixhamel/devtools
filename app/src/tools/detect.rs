@@ -31,6 +31,8 @@ static TIMESTAMP: LazyLock<Regex> = LazyLock::new(|| re(r"^\d{9,19}(\.\d+)?$"));
 static DATE: LazyLock<Regex> = LazyLock::new(|| re(r"^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}.*)?$"));
 /// A hex color (3, 4, 6 or 8 digits) or a CSS color function such as `rgb(…)` or `oklch(…)`.
 static COLOR: LazyLock<Regex> = LazyLock::new(|| re(r"(?i)^(#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|(rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(.+\))$"));
+/// An AWS EventBridge schedule: `cron(…)`, `rate(…)` or `at(…)`.
+static EVENTBRIDGE: LazyLock<Regex> = LazyLock::new(|| re(r"^(cron|rate|at)\([^()]+\)$"));
 /// One cron field: numbers, `* / , - ? L W #` and month or day names.
 static CRON_FIELD: LazyLock<Regex> = LazyLock::new(|| re(r"^[0-9*/,?LW#A-Za-z-]+$"));
 /// A percent-encoded byte, e.g. `%20`.
@@ -75,6 +77,7 @@ pub fn detect(text: &str) -> Option<Detected> {
     if TIMESTAMP.is_match(t) { return found("Unix Time Converter", "a timestamp"); }
     if DATE.is_match(t) { return found("Unix Time Converter", "a date"); }
     if COLOR.is_match(t) { return found("Color Converter", "a color"); }
+    if EVENTBRIDGE.is_match(t) { return found("Cron Job Parser", "an EventBridge schedule"); }
     // 5 to 7 fields with at least one `*` or `/` (so that a five-word sentence
     // is not taken), and croner must accept it.
     let fields: Vec<&str> = t.split_whitespace().collect();
@@ -103,7 +106,7 @@ pub fn detect(text: &str) -> Option<Detected> {
 fn is_yaml(text: &str) -> bool {
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#')).collect();
     lines.len() >= 2 && YAML_START.is_match(lines[0])
-        && serde_saphyr::from_multiple::<serde_json::Value>(text).is_ok_and(|docs| docs.first().is_some_and(|d| d.is_object() || d.is_array()))
+        && super::yaml_toml::yaml_documents(text).is_ok_and(|docs| docs.first().is_some_and(|d| d.is_object() || d.is_array()))
 }
 
 /// Whether `text` looks like a table: at least 3 lines that all have the same
@@ -150,6 +153,9 @@ mod tests {
             ("#82dca9", "Color Converter"),
             ("rgb(130, 220, 169)", "Color Converter"),
             ("*/15 9-17 * * MON-FRI", "Cron Job Parser"),
+            ("cron(0 12 ? * MON-FRI *)", "Cron Job Parser"),
+            ("rate(5 minutes)", "Cron Job Parser"),
+            ("at(2026-12-25T09:00:00)", "Cron Job Parser"),
             ("<?xml version=\"1.0\"?><a/>", "XML Beautify/Minify"),
             ("<div><p>Hi</p></div>", "HTML Beautify/Minify"),
             ("select id, name from users where id = 1", "SQL Formatter"),
@@ -186,7 +192,7 @@ mod tests {
         let tools = super::super::registry();
         let samples = ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln", "-----BEGIN CERTIFICATE-----", "data:image/png;base64,AA==", "{}",
             "https://a.io", "3f2504e0-4f89-11d3-9a0c-0305e82c3301", "10.0.0.0/16", "1700000000", "#fff", "0 * * * *", "<?xml?>", "<b>x</b>",
-            "SELECT 1", "a%20b", "&amp;", "48656c6c6f", "SGVsbG8sIHdvcmxkIQ==", "fooBar", "arn:aws:s3:::bucket", "a,b\n1,2\n3,4", "H4sIAAAAAAAC/8tIzcnJBwCGphA2BQAAAA==", "a: 1\nb: 2", "a = 1"];
+            "SELECT 1", "a%20b", "&amp;", "48656c6c6f", "SGVsbG8sIHdvcmxkIQ==", "fooBar", "arn:aws:s3:::bucket", "a,b\n1,2\n3,4", "H4sIAAAAAAAC/8tIzcnJBwCGphA2BQAAAA==", "a: 1\nb: 2", "a = 1", "cron(0 12 ? * MON-FRI *)"];
         for text in samples {
             let detected = detect(text).unwrap_or_else(|| panic!("{text} not recognized"));
             let tool = tools.iter().find(|t| t.name() == detected.tool).unwrap_or_else(|| panic!("no tool named {}", detected.tool));

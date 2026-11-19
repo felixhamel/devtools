@@ -21,7 +21,7 @@ DevUtils gathers the small tools developers reach for every day — formatting J
 
 ## Highlights
 
-- **Paste anything.** Press ⌘V on the home screen: DevUtils recognizes JWTs, JSON, YAML, TOML, CSV, CloudWatch Logs data, timestamps and dates, UUIDs and ULIDs, IP addresses and CIDR blocks, AWS ARNs, URLs, colors, cron expressions, certificates, Base64 and more, and opens the right tool with it. Drop files the same way: two images open in Image Compare, two texts in Code Compare.
+- **Paste anything.** Press ⌘V on the home screen: DevUtils recognizes JWTs, JSON, YAML, TOML, CSV, CloudWatch Logs data, timestamps and dates, UUIDs and ULIDs, IP addresses and CIDR blocks, AWS ARNs, URLs, colors, cron expressions and EventBridge schedules, certificates, Base64 and more, and opens the right tool with it. Drop files the same way: a Markdown file opens in the Markdown Editor, a CSV in JSON ↔ CSV, a YAML or TOML file in the converter, two images in Image Compare, two texts in Code Compare.
 - **Live results.** Tools update as you type, with syntax highlighting (JSON, SQL, JS, HTML, CSS, XML…). Results shown as a list — hashes, color formats, dates, certificate fields — have a copy button on each value.
 - **Chain tools.** The **⇄ Reuse** menu sends a result back as input, or to another tool: decode Base64, then send the JSON to the formatter.
 - **Find a tool fast.** ⌘K opens a palette with fuzzy search. Star the tools you use most with ⌘D: they come first in the sidebar, on the home screen and in the palette.
@@ -51,7 +51,7 @@ DevUtils gathers the small tools developers reach for every day — formatting J
 | Tool | What it does |
 |---|---|
 | **Unix Time Converter** | Timestamps in seconds, ms, µs or ns (detected automatically), ISO 8601 or RFC 2822 dates; calendar and clock fields, any IANA time zone, relative time ("3 days ago") |
-| **Cron Job Parser** | A plain-English description of a cron expression (5 fields, or 6 with seconds) and its next runs |
+| **Cron Job Parser** | A plain-English description of a cron expression (5 fields, or 6 with seconds) and its next runs; also reads AWS EventBridge schedules: `cron(0 12 ? * MON-FRI *)` with its runs in UTC and local time, `rate(5 minutes)` and `at(…)` |
 | **Date Calculator** | The time between two dates (calendar breakdown, days, weeks, business days, hours…), a date plus or minus a duration (optionally in business days), or one moment in your time zone, UTC and common zones |
 
 ### Data conversion
